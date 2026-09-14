@@ -436,7 +436,7 @@ export const CPStage: React.FC = () => {
           {layers.grid && <GridLayer config={grid} zoom={camera.zoom} />}
 
           {/* Layer 3: Crease Lines (batched by color) */}
-          {layers.creases && (
+          {layers.creases && viewMode !== 'image' && (
             <CreaseLayer
               creases={creases}
               selectedId={selectedCreaseId}
@@ -446,7 +446,9 @@ export const CPStage: React.FC = () => {
           )}
 
           {/* Layer 4: Intersections */}
-          {layers.intersections && <IntersectionLayer creases={creases} zoom={camera.zoom} />}
+          {layers.intersections && viewMode !== 'image' && (
+            <IntersectionLayer creases={creases} zoom={camera.zoom} />
+          )}
 
           {/* Layer 5: Symmetry */}
           {layers.symmetry && (
@@ -467,7 +469,7 @@ export const CPStage: React.FC = () => {
           scaleY={camera.zoom}
         >
           {/* Intermediate line drawing preview */}
-          {drawingCreaseStart && cursorPaper && (
+          {drawingCreaseStart && cursorPaper && viewMode !== 'image' && (
             <CreaseLayer
               creases={[
                 {

@@ -35,3 +35,4 @@ Thumbs.db
 # Temporary test / coverage outputs
 coverage/
 .vitest/
+
