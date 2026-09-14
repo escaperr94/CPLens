@@ -1,9 +1,13 @@
 import React from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { useAppStore } from '../store/projectStore';
 import { paperToScreen } from '../canvas/transforms';
 
 export const HoverTooltip: React.FC = () => {
-  const { hoveredPoint, camera } = useAppStore();
+  const { hoveredPoint, camera } = useAppStore(useShallow((state) => ({
+    hoveredPoint: state.hoveredPoint,
+    camera: state.camera,
+  })));
 
   if (!hoveredPoint) return null;
 
@@ -55,4 +59,3 @@ export const HoverTooltip: React.FC = () => {
     </div>
   );
 };
-

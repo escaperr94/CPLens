@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { TopNav } from './ui/TopNav';
 import { Toolbar } from './ui/Toolbar';
 import { Inspector } from './ui/Inspector';
@@ -9,8 +10,10 @@ import { AnalysisModal, AnalysisToast } from './ui/AnalysisModal';
 import { CommandPalette } from './ui/CommandPalette';
 import { useShortcuts } from './app/useShortcuts';
 import { useAppStore } from './store/projectStore';
-import { runCPAnalysisPipeline } from './cv/pipeline';
+import { runCPAnalysisPipeline } from './cv/client';
 import { createUnitSquareHomography } from './geometry/homography';
+
+const SCHWARZ_LANTERN_CP = 'https://upload.wikimedia.org/wikipedia/commons/7/71/Schwarz_lantern_crease_pattern.svg';
 
 export const App: React.FC = () => {
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
@@ -27,7 +30,15 @@ export const App: React.FC = () => {
     startAnalysis,
     updateAnalysisProgress,
     finishAnalysis,
-  } = useAppStore();
+  } = useAppStore(useShallow((state) => ({
+    image: state.image,
+    loadImage: state.loadImage,
+    setGridConfig: state.setGridConfig,
+    fitToPaper: state.fitToPaper,
+    startAnalysis: state.startAnalysis,
+    updateAnalysisProgress: state.updateAnalysisProgress,
+    finishAnalysis: state.finishAnalysis,
+  })));
 
   // Helper to convert Image to HTMLCanvasElement
   const imageToCanvas = (img: HTMLImageElement): HTMLCanvasElement => {
@@ -70,6 +81,8 @@ export const App: React.FC = () => {
             divisionsY: result.gridDivisions,
             majorSubdivisions: result.gridDivisions >= 16 ? 8 : 4,
           },
+          layers: { ...state.layers, grid: false },
+          viewMode: 'overlay',
           creases: result.creases,
           points: result.referencePoints,
         }));
@@ -80,6 +93,7 @@ export const App: React.FC = () => {
           fitToPaper(window.innerWidth - 360, window.innerHeight - 80);
         }, 100);
       } catch (err) {
+        useAppStore.setState({ isAnalyzing: false });
         console.error('Analysis error:', err);
         alert('Could not complete automatic analysis. Please try manual calibration.');
       }
@@ -155,6 +169,17 @@ export const App: React.FC = () => {
     };
   }, [loadImage, fitToPaper]);
 
+  const handleLoadSchwarz = useCallback(() => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      loadImage(SCHWARZ_LANTERN_CP, 'Schwarz_lantern_crease_pattern.svg', img.naturalWidth, img.naturalHeight);
+      analyzeImage(img);
+    };
+    img.onerror = () => alert('Could not load the Wikimedia Commons test crease pattern. Check your network connection.');
+    img.src = SCHWARZ_LANTERN_CP;
+  }, [loadImage, analyzeImage]);
+
   // Load CP.png automatically on initial mount
   useEffect(() => {
     handleLoadCP();
@@ -226,6 +251,7 @@ export const App: React.FC = () => {
         onRunAutoAnalysis={handleRunAutoAnalysis}
         onLoadCP={handleLoadCP}
         onLoadDove={handleLoadDove}
+        onLoadSchwarz={handleLoadSchwarz}
       />
 
       {/* Main Workspace Canvas */}
@@ -261,6 +287,7 @@ export const App: React.FC = () => {
         onRunAnalysis={handleRunAutoAnalysis}
         onLoadCP={handleLoadCP}
         onLoadDove={handleLoadDove}
+        onLoadSchwarz={handleLoadSchwarz}
       />
     </div>
   );

@@ -1,116 +1,105 @@
-# CP Lens — Origami Crease Pattern Reference Inspector
+# CP Lens
 
 <div align="center">
-  <img src="public/logo_ori.png" alt="CP Lens Logo" width="96" height="96" />
-  <p><strong>A Figma-like geometric workspace & CAD inspector for origami crease patterns.</strong></p>
+  <img src="banner.png" alt="CP Lens – origami crease pattern workspace" width="100%" />
+  <br />
+  <h3>Geometric OCR and a Figma-like workspace for origami crease patterns.</h3>
+  <p>Turn a crease-pattern image into editable geometry, inspect rational coordinates, find foldable references, and export a clean CP.</p>
 </div>
 
----
+CP Lens is a local-first React/TypeScript application for origami designers. It keeps the source raster and the reconstructed paper geometry separate: the paper is rectified into normalized coordinates from `(0, 0)` to `(1, 1)`, while screen pixels are used only for rendering and interaction.
 
-## 🎯 Overview
+## What it does
 
-**CP Lens** is a local-first web application designed specifically for origami artists, designers, and folders. Instead of manually eyeballing and squinting at blurry raster crease patterns, CP Lens acts as a **geometric OCR and CAD workspace**:
+- Accepts a drag-and-drop, pasted, or selected image.
+- Includes the bundled CP and Dove examples plus a **Schwarz lantern CP** test preset loaded from Wikimedia Commons (CC0).
+- Proposes the dense CP region and paper boundary.
+- Detects colored crease centerlines with a deterministic directional scanner, including short fragments and non-grid directions such as 22.5°.
+- Runs analysis in a Web Worker so pan, zoom, and selection stay responsive.
+- Displays vector lines over the raster source with Vector, Overlay, and Image views.
+- Infers a likely lattice and shows rational coordinate approximations with residuals.
+- Provides screen-pixel snapping, cursor-centered zoom, loupe inspection, crosshair rulers, measurements, symmetry, and direct paper-corner calibration.
+- Includes a local WebAssembly port of Robert J. Lang’s ReferenceFinder for candidate folding sequences. The local search is intentionally bounded; the external ReferenceFinder remains available for deeper searches.
+- Exports `.cp`, `.ori`, SVG, project JSON, reference-point CSV, and measurement CSV files.
 
-1. **Drop / Paste**: Drag & drop or paste any crease pattern screenshot.
-2. **Perspective Rectification**: Automatically detect paper boundaries and rectify perspective distortion into normalized $[0, 1]^2$ unit-square coordinates.
-3. **Lattice & Crease Inference**: Infer the underlying grid lattice (e.g. 32×32, 64×64) and vectorize anti-aliased raster strokes into clean, continuous vector creases.
-4. **Interactive Figma-style CAD**: Inspect exact rational coordinates (e.g. $17/64$, $3/16$), measure angles and distances, place reference points, and export directly to folding software.
+## Quick start
 
----
-
-## ✨ Features
-
-- **⚡ Butter-Smooth Performance (60–120 FPS)**:
-  - Batched Konva `<Shape>` rendering merges thousands of creases into single-pass GPU/canvas draw calls.
-  - Multi-canvas layer isolation separates static vector creases from interactive overlays.
-  - Accelerated bounding-box early exit spatial snapping for real-time responsiveness without lag.
-
-- **🎨 Pure Figma Light Mode Aesthetic**:
-  - Clean light interface matching Figma's design language.
-  - Floating 2D toolbar, property inspector, and contextual cursor hints.
-  - Segmented view mode switcher: **Vector CP**, **Overlay** (with opacity blending), and **Image**.
-
-- **📐 Accurate Crease Rendering**:
-  - Thick, continuous solid lines without dashed breaks.
-  - Standard origami color coding:
-    - **Mountain**: Solid Red (`#DC2626`)
-    - **Valley**: Solid Blue (`#2563EB`)
-    - **Boundary / Edge**: Solid Charcoal (`#18181B`)
-
-- **🧮 Rational Coordinate Inspector**:
-  - Live cursor inspection showing closest dyadic and rational fractions ($/16, /32, /64, /128$).
-  - Candidate approximation table with exact error margins.
-
-- **💾 Comprehensive Export Formats**:
-  - **Oridieta / Orihime (`.cp` & `.ori`)**: Directly openable in Oridieta, Orihime, and Oripa.
-  - **Layered Vector SVG**: Crisp vector graphic with colored solid strokes.
-  - **Project JSON (v1)**: Full project state preservation.
-  - **CSV**: Reference points and measurements with rational fractions.
-
-- **⌨️ Cross-Platform Keyboard Shortcuts**:
-  - Platform-aware: Supports Windows (`Ctrl`) and macOS (`⌘`).
-  - `Ctrl/⌘ + K`: Command Palette search.
-  - `Ctrl/⌘ + Z` / `Ctrl + Y`: Undo / Redo.
-  - `Ctrl/⌘ + 0`: Fit paper to viewport.
-  - `Ctrl/⌘ + 1`: 100% zoom.
-  - `Ctrl/⌘ + +` / `Ctrl/⌘ + -`: Zoom in / out.
-  - `V`: Select, `H`: Pan (Hand), `P`: Point, `L`: Crease, `R`: Ruler, `G`: Grid, `S`: Snap toggle.
-
----
-
-## 🚀 Getting Started
-
-### Prerequisites
-- Node.js (v18 or higher recommended)
-- npm, yarn, or pnpm
-
-### Installation
+Requirements: Node.js 18 or newer and npm.
 
 ```bash
-# Clone the repository
-git clone https://github.com/your-username/cp-lens.git
+git clone https://github.com/escaperr94/cp-lens.git
 cd cp-lens
-
-# Install dependencies
 npm install
-
-# Start local development server
 npm run dev
 ```
 
-Open your browser at `http://localhost:5173/`.
+Open `http://localhost:5173/`. The app loads the bundled `CP.png` example. Use the `+` button to choose another image, paste an image directly into the workspace, or choose **Schwarz CP** to test a second pattern from the web.
 
-### Building for Production
-
-```bash
-# Typecheck & build with Vite
-npm run build
-
-# Preview production build locally
-npm run preview
-```
-
-### Running Unit Tests
+Useful scripts:
 
 ```bash
-# Run Vitest test suite
-npm run test
+npm run build    # Typecheck and create dist/
+npm test        # Run Vitest tests
+npm run preview  # Serve the production build locally
 ```
 
----
+## Publish to GitHub
 
-## 🛠️ Architecture & Tech Stack
+From the repository root, review the diff and commit the tracked source and assets:
 
-- **Framework**: React 18 + TypeScript + Vite
-- **Canvas / 2D Engine**: Konva & React-Konva
-- **State Management**: Zustand
-- **Styling**: Tailwind CSS
-- **Icons**: Lucide React
-- **Testing**: Vitest
+```bash
+git add src public README.md banner.png index.html package.json package-lock.json *.config.* tsconfig.json
+git commit -m "improve Figma-style measurement and reference point tools"
+git push -u origin main
+```
 
----
+If `origin` is not configured yet, create an empty GitHub repository first and run `git remote add origin <repository-url>`.
 
-## 📄 License
+## Typical workflow
 
-MIT License. Feel free to use, modify, and distribute for personal and origami research projects.
+1. Load an image. CP Lens proposes a paper region and starts analysis.
+2. Inspect the result in **Overlay** mode. The raster stays visible underneath the vector lines so alignment errors are easy to spot.
+3. Choose **Calibrate Paper** and drag the TL/TR/BR/BL handles if the crop or perspective is wrong. Calibration is editable at any time.
+4. Use **Grid** to choose or adjust divisions. Grid values are suggestions; they do not move the detected geometry.
+5. Hover an intersection or reference point. The inspector shows the raw normalized coordinate, nearest fraction, grid residual, and confidence.
+6. Use **Point**, **Measure**, or **Ruler** for manual corrections. In Select mode, drag a point to reposition it; drag a measurement endpoint to edit it. Measure supports both click-click and one continuous drag. Snapping is measured in screen pixels and can be toggled with `S`.
+7. Select a point and open **ReferenceFinder** to edit its normalized coordinates, convert to Robert Lang’s bottom-left origin, and search for short folding sequences.
+8. Use **Export** to save a CP/SVG file or preserve the complete project as JSON.
 
+## Keyboard shortcuts
+
+| Key | Action |
+| --- | --- |
+| `V` | Select |
+| `H` / `Space + drag` | Pan |
+| `P` | Add reference point |
+| `L` | Draw crease |
+| `M` | Measure two points |
+| `R` | Crosshair ruler |
+| `G` | Grid tool |
+| `S` | Toggle snapping |
+| `0` | Fit paper |
+| `1` | 100% zoom |
+| `Cmd/Ctrl + K` | Command palette |
+| `Cmd/Ctrl + Z` | Undo |
+| `Cmd/Ctrl + Shift + Z` | Redo |
+
+Scroll or trackpad zoom is cursor-centered. Double-click zooms toward the pointer. Hold `Alt` for the loupe.
+
+## Architecture
+
+```text
+raster image → CP region → paper calibration → normalized geometry
+             → raster centerlines → lattice suggestions → intersections
+             → reference points → editable canvas and exports
+```
+
+The frontend is React 18 + TypeScript + Vite, with Konva/React-Konva for the canvas, Zustand for state, Tailwind CSS for UI, a worker-based raster centerline extractor, and Vitest for geometry tests. `public/vendor/reference-finder/` contains the WebAssembly engine and its GPL license/source archive.
+
+## Notes on accuracy
+
+Detected lines, grid coordinates, and reference points are proposals. The inspector always keeps the raw coordinate and residual visible; a fraction is marked as approximate until the user explicitly edits or locks the geometry to a grid. For difficult scans, calibrate the paper corners first and use Overlay mode to verify the alignment before exporting. The Schwarz lantern sample is [David Eppstein's CC0 Wikimedia Commons file](https://commons.wikimedia.org/wiki/File:Schwarz_lantern_crease_pattern.svg).
+
+## License
+
+The CP Lens application code is released under the MIT License. The bundled ReferenceFinder engine is distributed under the GNU GPL; see [`public/vendor/reference-finder/LICENSE.txt`](public/vendor/reference-finder/LICENSE.txt) and the included source archive for its terms.

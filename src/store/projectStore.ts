@@ -96,6 +96,7 @@ export interface AppStore extends ProjectState, UIState {
 
   // Measurements
   addMeasurement: (m: Omit<MeasurementItem, 'id'>) => void;
+  updateMeasurement: (id: string, patch: Partial<MeasurementItem>) => void;
   deleteMeasurement: (id: string) => void;
   selectMeasurement: (id: string | null) => void;
 
@@ -484,6 +485,13 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }));
   },
 
+  updateMeasurement: (id, patch) => {
+    get().pushHistory();
+    set((state) => ({
+      measurements: state.measurements.map((m) => (m.id === id ? { ...m, ...patch } : m)),
+    }));
+  },
+
   deleteMeasurement: (id) => {
     get().pushHistory();
     set((state) => ({
@@ -579,8 +587,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
     const availableH = viewportHeight - padding * 2;
 
     const paperAspect = get().paper.aspectRatio || 1;
-    let paperW = 600;
-    let paperH = 600 / paperAspect;
+    let paperW = 1000;
+    let paperH = 1000 / paperAspect;
 
     const scaleW = availableW / paperW;
     const scaleH = availableH / paperH;
@@ -603,9 +611,20 @@ export const useAppStore = create<AppStore>((set, get) => ({
     });
   },
 
-  setCursor: (paper, screen) => set({ cursorPaper: paper, cursorScreen: screen }),
+  setCursor: (paper, screen) => set((state) => {
+    const prev = state.cursorScreen;
+    if (prev && screen && Math.hypot(prev.x - screen.x, prev.y - screen.y) < 0.15) return state;
+    if (!prev && !screen && !paper && !state.cursorPaper) return state;
+    return { cursorPaper: paper, cursorScreen: screen };
+  }),
 
-  setSnapCandidate: (snap) => set({ snapCandidate: snap }),
+  setSnapCandidate: (snap) => set((state) => {
+    const prev = state.snapCandidate;
+    if (!prev && !snap) return state;
+    if (prev && snap && prev.kind === snap.kind && prev.sourceId === snap.sourceId &&
+      Math.hypot(prev.point.x - snap.point.x, prev.point.y - snap.point.y) < 1e-5) return state;
+    return { snapCandidate: snap };
+  }),
 
   toggleSnapping: () => set((state) => ({ snappingEnabled: !state.snappingEnabled })),
 
@@ -636,4 +655,3 @@ export const useAppStore = create<AppStore>((set, get) => ({
     });
   },
 }));
-

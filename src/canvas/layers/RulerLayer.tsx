@@ -9,7 +9,7 @@ interface RulerLayerProps {
   zoom: number;
 }
 
-export const RulerLayer: React.FC<RulerLayerProps> = ({ rulers, zoom }) => {
+export const RulerLayer: React.FC<RulerLayerProps> = React.memo(({ rulers, zoom }) => {
   if (rulers.length === 0) return null;
 
   const strokeW = Math.max(0.5, 1 / zoom);
@@ -97,4 +97,4 @@ export const RulerLayer: React.FC<RulerLayerProps> = ({ rulers, zoom }) => {
       })}
     </Group>
   );
-};
+});

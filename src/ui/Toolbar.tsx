@@ -1,4 +1,5 @@
 import React from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import {
   MousePointer2,
   Hand,
@@ -22,9 +23,15 @@ interface ToolItem {
 }
 
 export const Toolbar: React.FC = () => {
-  const { activeTool, setActiveTool, creaseType, setCreaseType } = useAppStore();
+  const { activeTool, setActiveTool, creaseType, setCreaseType } = useAppStore(useShallow((state) => ({
+    activeTool: state.activeTool,
+    setActiveTool: state.setActiveTool,
+    creaseType: state.creaseType,
+    setCreaseType: state.setCreaseType,
+  })));
 
   const tools: ToolItem[] = [
+    { tool: 'select', label: 'Select', shortcut: 'V', icon: <MousePointer2 className="w-4 h-4" /> },
     { tool: 'pan', label: 'Hand Tool (Pan)', shortcut: 'H', icon: <Hand className="w-4 h-4" /> },
     { tool: 'calibrate', label: 'Calibrate Paper (4 Corners)', shortcut: 'K', icon: <Compass className="w-4 h-4" /> },
     { tool: 'point', label: 'Reference Point', shortcut: 'P', icon: <MapPin className="w-4 h-4" /> },
@@ -42,6 +49,7 @@ export const Toolbar: React.FC = () => {
         return (
           <button
             key={item.tool}
+            aria-label={`${item.label} (${item.shortcut})`}
             onClick={() => setActiveTool(item.tool)}
             className={`w-9 h-9 rounded-xl flex items-center justify-center transition relative group ${isActive
               ? 'bg-blue-100/70 text-blue-600 font-semibold shadow-2xs'

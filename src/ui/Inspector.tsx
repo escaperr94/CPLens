@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import { ReferenceFinderPanel } from './ReferenceFinderPanel';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   Layers,
   Grid as GridIcon,
@@ -21,7 +22,7 @@ interface InspectorProps {
 
 export const Inspector: React.FC<InspectorProps> = ({ onRunAutoAnalysis }) => {
   const [maxDenom, setMaxDenom] = useState<number>(64);
-  const [activeTab, setActiveTab] = useState<'selection' | 'grid' | 'layers'>('grid');
+  const [activeTab, setActiveTab] = useState<'selection' | 'grid' | 'layers'>('selection');
 
   const {
     cursorPaper,
@@ -54,6 +55,8 @@ export const Inspector: React.FC<InspectorProps> = ({ onRunAutoAnalysis }) => {
   const selectedCrease = creases.find((c) => c.id === selectedCreaseId);
   const selectedMeasurement = measurements.find((m) => m.id === selectedMeasurementId);
 
+  useEffect(() => { if (selectedPointId || selectedCreaseId || selectedMeasurementId) setActiveTab('selection'); }, [selectedPointId, selectedCreaseId, selectedMeasurementId]);
+
   const hasSelection = !!(selectedPoint || selectedCrease || selectedMeasurement);
 
   // Focus coordinate for live inspector
@@ -69,7 +72,7 @@ export const Inspector: React.FC<InspectorProps> = ({ onRunAutoAnalysis }) => {
   const candidatesX = targetCoord ? getFractionCandidates(targetCoord.x, maxDenom) : [];
   const candidatesY = targetCoord ? getFractionCandidates(targetCoord.y, maxDenom) : [];
 
-  const intersections = findCreaseIntersections(creases);
+  const intersections = useMemo(() => findCreaseIntersections(creases), [creases]);
 
   return (
     <aside className="w-[280px] bg-white border border-neutral-200/80 rounded-2xl shadow-[0_4px_24px_rgba(0,0,0,0.06)] m-3 flex flex-col text-xs text-neutral-800 select-none z-20 overflow-hidden">
@@ -108,6 +111,7 @@ export const Inspector: React.FC<InspectorProps> = ({ onRunAutoAnalysis }) => {
 
       {/* Main Panel Content */}
       <div className="flex-1 overflow-y-auto p-3 space-y-4">
+        {activeTab === 'selection' && targetCoord && <ReferenceFinderPanel point={targetCoord} />}
         {/* TAB: SELECTION / DYNAMIC INSPECTOR */}
         {activeTab === 'selection' && (
           <>
@@ -139,7 +143,7 @@ export const Inspector: React.FC<InspectorProps> = ({ onRunAutoAnalysis }) => {
                 {/* Figma-style 2-column Position inputs */}
                 <div>
                   <div className="text-[11px] font-medium text-neutral-400 uppercase tracking-wider mb-1.5">
-                    Position (Rational)
+                    Position (Approximate)
                   </div>
                   <div className="grid grid-cols-2 gap-2">
                     <div className="flex items-center bg-neutral-50 border border-neutral-200 rounded px-2 py-1">

@@ -16,8 +16,8 @@ export const IntersectionLayer: React.FC<IntersectionLayerProps> = React.memo(({
 
   if (intersections.length === 0) return null;
 
-  const radius = Math.max(1.5, 2.2 / zoom);
-  const strokeW = Math.max(0.5, 0.8 / zoom);
+  const radius = 2.2 / zoom;
+  const strokeW = 0.8 / zoom;
 
   return (
     <Group listening={false}>

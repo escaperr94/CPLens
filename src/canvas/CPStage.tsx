@@ -1,4 +1,5 @@
 import React, { useRef, useEffect, useState, useMemo, useCallback } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { Stage, Layer, Image as KonvaImage, Rect, Group } from 'react-konva';
 import Konva from 'konva';
 import { useAppStore } from '../store/projectStore';
@@ -29,10 +30,11 @@ export const CPStage: React.FC = () => {
   const [isSpacePressed, setIsSpacePressed] = useState(false);
   const [isAltPressed, setIsAltPressed] = useState(false);
   const [isPanning, setIsPanning] = useState(false);
-  const [lastPanPos, setLastPanPos] = useState<Point2D | null>(null);
 
   const panRafRef = useRef<number | null>(null);
   const cursorRafRef = useRef<number | null>(null);
+  const lastPanPosRef = useRef<Point2D | null>(null);
+  const measureStartScreenRef = useRef<Point2D | null>(null);
   const pendingCursorRef = useRef<{ paper: Point2D; screen: Point2D } | null>(null);
 
   const {
@@ -75,12 +77,59 @@ export const CPStage: React.FC = () => {
     addCrease,
     selectCrease,
     addMeasurement,
+    updateMeasurement,
     selectMeasurement,
     addRuler,
     setDrawingMeasurementStart,
     setDrawingCreaseStart,
     setCrop,
-  } = useAppStore();
+  } = useAppStore(useShallow((state) => ({
+    image: state.image,
+    paper: state.paper,
+    grid: state.grid,
+    points: state.points,
+    creases: state.creases,
+    measurements: state.measurements,
+    rulers: state.rulers,
+    symmetry: state.symmetry,
+    layers: state.layers,
+    activeTool: state.activeTool,
+    creaseType: state.creaseType,
+    selectedPointId: state.selectedPointId,
+    selectedCreaseId: state.selectedCreaseId,
+    selectedMeasurementId: state.selectedMeasurementId,
+    viewMode: state.viewMode,
+    imageOpacity: state.imageOpacity,
+    camera: state.camera,
+    cursorPaper: state.cursorPaper,
+    cursorScreen: state.cursorScreen,
+    snapCandidate: state.snapCandidate,
+    snappingEnabled: state.snappingEnabled,
+    snapOptions: state.snapOptions,
+    loupe: state.loupe,
+    calibrationCorners: state.calibrationCorners,
+    drawingMeasurementStart: state.drawingMeasurementStart,
+    drawingCreaseStart: state.drawingCreaseStart,
+    setCamera: state.setCamera,
+    zoomAroundPoint: state.zoomAroundPoint,
+    fitToPaper: state.fitToPaper,
+    setCursor: state.setCursor,
+    setSnapCandidate: state.setSnapCandidate,
+    setHoveredPoint: state.setHoveredPoint,
+    setCalibrationCorner: state.setCalibrationCorner,
+    addPoint: state.addPoint,
+    updatePoint: state.updatePoint,
+    selectPoint: state.selectPoint,
+    addCrease: state.addCrease,
+    selectCrease: state.selectCrease,
+    addMeasurement: state.addMeasurement,
+    updateMeasurement: state.updateMeasurement,
+    selectMeasurement: state.selectMeasurement,
+    addRuler: state.addRuler,
+    setDrawingMeasurementStart: state.setDrawingMeasurementStart,
+    setDrawingCreaseStart: state.setDrawingCreaseStart,
+    setCrop: state.setCrop,
+  })));
 
   // Load image object whenever image URL changes
   useEffect(() => {
@@ -132,6 +181,7 @@ export const CPStage: React.FC = () => {
       if (e.code === 'Space') {
         setIsSpacePressed(false);
         setIsPanning(false);
+        lastPanPosRef.current = null;
       }
       if (e.key === 'Alt') {
         setIsAltPressed(false);
@@ -164,6 +214,34 @@ export const CPStage: React.FC = () => {
     };
   }, [points, intersections, creases, grid, symmetry.axes]);
 
+  const movePoint = useCallback((id: string, point: Point2D) => {
+    const current = useAppStore.getState();
+    const scene = {
+      ...geometryScene,
+      // Do not snap a dragged point back to itself.
+      referencePoints: geometryScene.referencePoints.filter((p) => p.id !== id),
+    };
+    const snap = current.snappingEnabled
+      ? findSnapTarget(point, scene, { ...current.snapOptions, zoom: current.camera.zoom })
+      : null;
+    updatePoint(id, snap?.point ?? {
+      x: Math.max(0, Math.min(1, point.x)),
+      y: Math.max(0, Math.min(1, point.y)),
+    });
+  }, [geometryScene, updatePoint]);
+
+  const moveMeasurement = useCallback((id: string, endpoint: 'p1' | 'p2', point: Point2D) => {
+    const current = useAppStore.getState();
+    const snap = current.snappingEnabled
+      ? findSnapTarget(point, geometryScene, { ...current.snapOptions, zoom: current.camera.zoom })
+      : null;
+    const next = snap?.point ?? {
+      x: Math.max(0, Math.min(1, point.x)),
+      y: Math.max(0, Math.min(1, point.y)),
+    };
+    updateMeasurement(id, endpoint === 'p1' ? { p1: next } : { p2: next });
+  }, [geometryScene, updateMeasurement]);
+
   // Zoom on wheel (cursor-anchored zoom)
   const handleWheel = (e: Konva.KonvaEventObject<WheelEvent>) => {
     e.evt.preventDefault();
@@ -183,7 +261,7 @@ export const CPStage: React.FC = () => {
     // Middle click or Space+click initiates pan
     if (e.evt.button === 1 || (e.evt.button === 0 && (isSpacePressed || activeTool === 'pan'))) {
       setIsPanning(true);
-      setLastPanPos({ x: e.evt.clientX, y: e.evt.clientY });
+      lastPanPosRef.current = { x: e.evt.clientX, y: e.evt.clientY };
       return;
     }
 
@@ -196,7 +274,10 @@ export const CPStage: React.FC = () => {
 
     // Determine target point: snapCandidate if active, else raw cursor
     const rawPaper = screenToPaper(pointer, camera);
-    const targetPaper = snappingEnabled && snapCandidate ? snapCandidate.point : rawPaper;
+    const clickSnap = snappingEnabled ? findSnapTarget(rawPaper, geometryScene, { ...snapOptions, zoom: camera.zoom }) : null;
+    const targetPaper = clickSnap?.point ?? rawPaper;
+
+    if (activeTool !== 'calibrate' && activeTool !== 'select' && (targetPaper.x < 0 || targetPaper.x > 1 || targetPaper.y < 0 || targetPaper.y > 1)) return;
 
     // Handle tool clicks
     switch (activeTool) {
@@ -213,6 +294,10 @@ export const CPStage: React.FC = () => {
       }
 
       case 'point': {
+        if (clickSnap?.kind === 'reference-point' && clickSnap.sourceId) {
+          selectPoint(clickSnap.sourceId);
+          break;
+        }
         addPoint({
           x: targetPaper.x,
           y: targetPaper.y,
@@ -225,12 +310,14 @@ export const CPStage: React.FC = () => {
       case 'measure': {
         if (!drawingMeasurementStart) {
           setDrawingMeasurementStart(targetPaper);
+          measureStartScreenRef.current = { x: pointer.x, y: pointer.y };
         } else {
           addMeasurement({
             p1: drawingMeasurementStart,
             p2: targetPaper,
           });
           setDrawingMeasurementStart(null);
+          measureStartScreenRef.current = null;
         }
         break;
       }
@@ -256,6 +343,7 @@ export const CPStage: React.FC = () => {
       }
 
       case 'select': {
+        // Deselect if clicked empty area
         // Check if user clicked near a crease (12px radius)
         const clickTolerance = 12 / (camera.zoom * BASE_PAPER_SIZE);
         let closestCreaseId: string | null = null;
@@ -284,23 +372,15 @@ export const CPStage: React.FC = () => {
     }
   };
 
+  // Mouse move
   // Mouse move with RAF throttling for 60-120fps smooth performance
   const handleMouseMove = (e: Konva.KonvaEventObject<MouseEvent>) => {
-    if (isPanning && lastPanPos) {
-      const dx = e.evt.clientX - lastPanPos.x;
-      const dy = e.evt.clientY - lastPanPos.y;
-      setLastPanPos({ x: e.evt.clientX, y: e.evt.clientY });
-
-      if (!panRafRef.current) {
-        panRafRef.current = requestAnimationFrame(() => {
-          panRafRef.current = null;
-          const currentCam = useAppStore.getState().camera;
-          setCamera({
-            panX: currentCam.panX + dx,
-            panY: currentCam.panY + dy,
-          });
-        });
-      }
+    if (isPanning && lastPanPosRef.current) {
+      const dx = e.evt.clientX - lastPanPosRef.current.x;
+      const dy = e.evt.clientY - lastPanPosRef.current.y;
+      const currentCam = useAppStore.getState().camera;
+      setCamera({ panX: currentCam.panX + dx, panY: currentCam.panY + dy });
+      lastPanPosRef.current = { x: e.evt.clientX, y: e.evt.clientY };
       return;
     }
 
@@ -320,7 +400,8 @@ export const CPStage: React.FC = () => {
           setCursor(paper, screen);
 
           // Calculate snap candidate
-          if (snappingEnabled && activeTool !== 'calibrate') {
+          if (snappingEnabled && activeTool !== 'calibrate' &&
+            paper.x >= -0.02 && paper.x <= 1.02 && paper.y >= -0.02 && paper.y <= 1.02) {
             const snap = findSnapTarget(paper, geometryScene, {
               ...snapOptions,
               zoom: camera.zoom,
@@ -337,11 +418,31 @@ export const CPStage: React.FC = () => {
   const handleMouseUp = () => {
     if (isPanning) {
       setIsPanning(false);
-      setLastPanPos(null);
+      lastPanPosRef.current = null;
       if (panRafRef.current) {
         cancelAnimationFrame(panRafRef.current);
         panRafRef.current = null;
       }
+    }
+
+    // A measurement can be made with a single Figma-like drag. Click-click
+    // remains supported through the mouse-down branch above.
+    if (activeTool === 'measure' && drawingMeasurementStart && measureStartScreenRef.current) {
+      const stage = stageRef.current;
+      const pointer = stage?.getPointerPosition();
+      const start = measureStartScreenRef.current;
+      if (pointer && Math.hypot(pointer.x - start.x, pointer.y - start.y) >= 4) {
+        const rawPaper = screenToPaper(pointer, camera);
+        const snap = snappingEnabled
+          ? findSnapTarget(rawPaper, geometryScene, { ...snapOptions, zoom: camera.zoom })
+          : null;
+        const end = snap?.point ?? rawPaper;
+        if (end.x >= 0 && end.x <= 1 && end.y >= 0 && end.y <= 1) {
+          addMeasurement({ p1: drawingMeasurementStart, p2: end });
+          setDrawingMeasurementStart(null);
+        }
+      }
+      measureStartScreenRef.current = null;
     }
   };
 
@@ -366,7 +467,10 @@ export const CPStage: React.FC = () => {
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
+        onMouseLeave={handleMouseUp}
+        onDblClick={() => { const p = stageRef.current?.getPointerPosition(); if (p) zoomAroundPoint(2, p); }}
       >
+        {/* Layer 1: Background & Image Layer */}
         {/* Layer 1: Static Geometry & Image Layer (listening={false} for zero hit-canvas overhead) */}
         <Layer
           x={camera.panX}
@@ -435,6 +539,7 @@ export const CPStage: React.FC = () => {
           {/* Layer 2: Grid */}
           {layers.grid && <GridLayer config={grid} zoom={camera.zoom} />}
 
+          {/* Layer 3: Crease Lines */}
           {/* Layer 3: Crease Lines (batched by color) */}
           {layers.creases && viewMode !== 'image' && (
             <CreaseLayer
@@ -486,6 +591,8 @@ export const CPStage: React.FC = () => {
             />
           )}
 
+          {/* Layer 4: Intersections */}
+
           {/* Layer 6: Rulers */}
           {layers.rulers && <RulerLayer rulers={rulers} zoom={camera.zoom} />}
 
@@ -498,6 +605,7 @@ export const CPStage: React.FC = () => {
               selectedId={selectedMeasurementId}
               zoom={camera.zoom}
               onSelect={selectMeasurement}
+              onMoveMeasurement={moveMeasurement}
             />
           )}
 
@@ -507,7 +615,9 @@ export const CPStage: React.FC = () => {
               points={points}
               selectedId={selectedPointId}
               zoom={camera.zoom}
+              draggable={activeTool === 'select'}
               onSelectPoint={selectPoint}
+              onMovePoint={movePoint}
               onHoverPoint={setHoveredPoint}
             />
           )}
@@ -537,7 +647,7 @@ export const CPStage: React.FC = () => {
         cursorScreen={cursorScreen}
         cursorPaper={cursorPaper}
         snap={snapCandidate}
-        sourceCanvas={rectifiedCanvas || (stageRef.current ? stageRef.current.toCanvas() : null)}
+        sourceCanvas={rectifiedCanvas}
         active={isAltPressed || loupe.active}
         zoom={loupe.zoom}
         size={loupe.sizePx}

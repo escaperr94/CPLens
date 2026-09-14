@@ -1,4 +1,5 @@
 import React, { useRef, useState } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import {
   Download,
   RotateCcw,
@@ -26,6 +27,7 @@ interface TopNavProps {
   onRunAutoAnalysis: () => void;
   onLoadCP: () => void;
   onLoadDove: () => void;
+  onLoadSchwarz: () => void;
 }
 
 export const TopNav: React.FC<TopNavProps> = ({
@@ -33,6 +35,7 @@ export const TopNav: React.FC<TopNavProps> = ({
   onRunAutoAnalysis,
   onLoadCP,
   onLoadDove,
+  onLoadSchwarz,
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const jsonInputRef = useRef<HTMLInputElement>(null);
@@ -57,7 +60,25 @@ export const TopNav: React.FC<TopNavProps> = ({
     setLoupeActive,
     viewMode,
     setViewMode,
-  } = useAppStore();
+  } = useAppStore(useShallow((state) => ({
+    image: state.image,
+    loadImage: state.loadImage,
+    camera: state.camera,
+    setCamera: state.setCamera,
+    fitToPaper: state.fitToPaper,
+    snappingEnabled: state.snappingEnabled,
+    toggleSnapping: state.toggleSnapping,
+    undo: state.undo,
+    redo: state.redo,
+    past: state.past,
+    future: state.future,
+    getProjectData: state.getProjectData,
+    loadProjectData: state.loadProjectData,
+    loupe: state.loupe,
+    setLoupeActive: state.setLoupeActive,
+    viewMode: state.viewMode,
+    setViewMode: state.setViewMode,
+  })));
 
   const isMac = typeof navigator !== 'undefined' && /mac/i.test(navigator.platform || navigator.userAgent);
   const modKey = isMac ? '⌘' : 'Ctrl';
@@ -160,6 +181,15 @@ export const TopNav: React.FC<TopNavProps> = ({
         >
           <FileText className="w-3.5 h-3.5 text-neutral-400" />
           <span>Dove.png</span>
+        </button>
+
+        <button
+          onClick={onLoadSchwarz}
+          className="hidden xl:flex items-center space-x-1 px-2.5 py-1 bg-white hover:bg-neutral-50 text-neutral-700 border border-neutral-200 rounded-xl font-medium text-xs shadow-2xs transition"
+          title="Load the CC0 Schwarz lantern crease pattern from Wikimedia Commons"
+        >
+          <FileCode className="w-3.5 h-3.5 text-emerald-500" />
+          <span>Schwarz CP</span>
         </button>
 
         {/* Add File (+) Button */}
@@ -382,4 +412,3 @@ export const TopNav: React.FC<TopNavProps> = ({
     </header>
   );
 };
-

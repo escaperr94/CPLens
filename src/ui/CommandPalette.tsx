@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import {
   Search,
   Sparkles,
@@ -18,6 +19,7 @@ interface CommandPaletteProps {
   onRunAnalysis: () => void;
   onLoadCP: () => void;
   onLoadDove: () => void;
+  onLoadSchwarz: () => void;
 }
 
 export const CommandPalette: React.FC<CommandPaletteProps> = ({
@@ -26,6 +28,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
   onRunAnalysis,
   onLoadCP,
   onLoadDove,
+  onLoadSchwarz,
 }) => {
   const [query, setQuery] = useState('');
 
@@ -40,7 +43,18 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
     clearRulers,
     resetCalibration,
     getProjectData,
-  } = useAppStore();
+  } = useAppStore(useShallow((state) => ({
+    fitToPaper: state.fitToPaper,
+    setCamera: state.setCamera,
+    toggleSnapping: state.toggleSnapping,
+    snappingEnabled: state.snappingEnabled,
+    loupe: state.loupe,
+    setLoupeActive: state.setLoupeActive,
+    setGridConfig: state.setGridConfig,
+    clearRulers: state.clearRulers,
+    resetCalibration: state.resetCalibration,
+    getProjectData: state.getProjectData,
+  })));
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -87,6 +101,16 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
       icon: <Sparkles className="w-4 h-4 text-purple-500" />,
       run: () => {
         onLoadDove();
+        onClose();
+      },
+    },
+    {
+      id: 'load_schwarz',
+      label: 'Load Schwarz lantern CP (CC0 Wikimedia Commons)',
+      category: 'Preset',
+      icon: <Sparkles className="w-4 h-4 text-emerald-500" />,
+      run: () => {
+        onLoadSchwarz();
         onClose();
       },
     },
@@ -240,4 +264,3 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
     </div>
   );
 };
-

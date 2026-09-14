@@ -1,3 +1,4 @@
+import { extractRasterLines, inferRasterGrid } from './rasterLines';
 import { Point2D } from '../geometry/point';
 import { CreaseLine, ReferencePoint, AnalysisReport } from '../store/types';
 import { CreaseType, lineFromPoints } from '../geometry/line';
@@ -418,18 +419,10 @@ export function extractCreasesFromLattice(
  * 6. Computing intersections
  * 7. Recovering reference points
  */
-export async function runCPAnalysisPipeline(
-  canvas: HTMLCanvasElement,
+export async function analyzePixels(
+  data: Uint8ClampedArray, width: number, height: number,
   onProgress?: PipelineProgressCallback
 ): Promise<PipelineResult> {
-  const ctx = canvas.getContext('2d');
-  if (!ctx) throw new Error('Canvas 2D context unavailable');
-
-  const width = canvas.width;
-  const height = canvas.height;
-  const imgData = ctx.getImageData(0, 0, width, height);
-  const data = imgData.data;
-
   // Step 1: Detecting CP region...
   onProgress?.('Detecting CP region...', 15);
   await new Promise((r) => setTimeout(r, 60));
@@ -446,26 +439,35 @@ export async function runCPAnalysisPipeline(
     { x: region.x0, y: region.y0 + region.height },
   ];
 
-  // Step 3: Rectifying perspective...
-  onProgress?.('Rectifying perspective...', 45);
+  // Step 3: Locating axis-aligned paper bounds...
+  onProgress?.('Locating axis-aligned paper bounds...', 45);
   await new Promise((r) => setTimeout(r, 60));
 
   // Step 4 & 5: Inferring grid & detecting crease lines...
-  onProgress?.('Inferring grid lattice (32 × 32)...', 60);
+  onProgress?.('Detecting pixel centerlines (including 22.5°)...', 60);
   await new Promise((r) => setTimeout(r, 60));
 
   // True base grid for origami CP is 32x32
-  const N = 32;
+  const creases = await extractRasterLines(data, width, height, region);
+  const N = inferRasterGrid(creases, Math.max(region.width, region.height));
 
   onProgress?.('Detecting and vectorizing crease lines...', 75);
   await new Promise((r) => setTimeout(r, 80));
 
-  const creases = extractCreasesFromLattice(data, width, height, region, N);
+
 
   // Step 6: Computing intersections...
   onProgress?.('Computing intersections...', 85);
   await new Promise((r) => setTimeout(r, 60));
-  const rawIntersections = findCreaseIntersections(creases);
+  const rawIntersections = findCreaseIntersections(creases, 1.5 / Math.max(region.width, region.height));
+  const intersectionCount = rawIntersections.length;
+  // Raster segment endpoints are useful reference proposals even when a crossing is occluded.
+  const endpointTolerance = 1.5 / Math.max(region.width, region.height);
+  for (const crease of creases) for (const endpoint of [crease.p1, crease.p2]) {
+    const existing = rawIntersections.find(p => Math.hypot(p.x-endpoint.x,p.y-endpoint.y) <= endpointTolerance);
+    if (existing) { if (!existing.creaseIds.includes(crease.id)) existing.creaseIds.push(crease.id); }
+    else rawIntersections.push({id: `end_${rawIntersections.length}`, ...endpoint, creaseIds:[crease.id]});
+  }
 
   // Step 7: Recovering reference points...
   onProgress?.('Recovering reference points...', 95);
@@ -481,7 +483,7 @@ export async function runCPAnalysisPipeline(
     const complexity = (fx.denominator + fy.denominator) / (2 * N);
     const degree = inter.creaseIds.length;
     const confidence = Math.min(0.99, Math.max(0.7, 0.98 - complexity * 0.15 + (degree >= 3 ? 0.05 : 0)));
-    const residualPx = Number((Math.random() * 0.3 + 0.15).toFixed(2));
+    const residualPx = Math.hypot(fx.error * region.width, fy.error * region.height);
 
     referencePoints.push({
       id: `P${ptId++}`,
@@ -491,7 +493,7 @@ export async function runCPAnalysisPipeline(
       yRaw: Number(inter.y.toFixed(5)),
       xGrid: fx,
       yGrid: fy,
-      confidence,
+      confidence: Math.exp(-residualPx / 2),
       residualPx,
       incidentCreases: [...inter.creaseIds],
       label: `P${ptId - 1}`,
@@ -505,10 +507,10 @@ export async function runCPAnalysisPipeline(
   const report: AnalysisReport = {
     cpRegionDetected: true,
     paperBoundaryDetected: true,
-    perspectiveCorrected: true,
+    perspectiveCorrected: false,
     creaseSegmentsCount: creases.length,
     baseGrid: `${N} × ${N}`,
-    intersectionsCount: rawIntersections.length,
+    intersectionsCount: intersectionCount,
     referencePointsCount: referencePoints.length,
     visible: true,
   };

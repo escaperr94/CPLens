@@ -7,19 +7,10 @@ export const AnalysisModal: React.FC = () => {
 
   if (!isAnalyzing) return null;
 
-  const steps = [
-    'Detecting CP region...',
-    'Detecting paper boundary...',
-    'Rectifying perspective...',
-    'Inferring grid lattice...',
-    'Detecting crease lines...',
-    'Computing intersections...',
-    'Recovering reference points...',
-  ];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20 backdrop-blur-sm animate-fade-in">
-      <div className="w-[380px] bg-white rounded-2xl shadow-figma-menu border border-neutral-200 p-6 space-y-5">
+    <div className="fixed bottom-12 left-20 z-50 pointer-events-none">
+      <div className="w-[340px] bg-white rounded-2xl shadow-figma-menu border border-neutral-200 p-6 space-y-5">
         <div className="flex items-center space-x-3">
           <div className="w-9 h-9 rounded-xl bg-blue-50 text-figma-blue flex items-center justify-center">
             <Sparkles className="w-5 h-5 animate-pulse" />
@@ -44,35 +35,7 @@ export const AnalysisModal: React.FC = () => {
           </div>
         </div>
 
-        {/* Step checklist */}
-        <div className="space-y-2 py-1 border-t border-neutral-100 pt-3">
-          {steps.map((step) => {
-            const isCompleted = steps.indexOf(step) < steps.indexOf(analysisStep);
-            const isCurrent = step === analysisStep;
 
-            return (
-              <div
-                key={step}
-                className={`flex items-center space-x-2 text-xs transition ${isCompleted
-                    ? 'text-emerald-600 font-medium'
-                    : isCurrent
-                      ? 'text-figma-blue font-medium'
-                      : 'text-neutral-300'
-                  }`}
-              >
-                {isCompleted ? (
-                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
-                ) : (
-                  <div
-                    className={`w-2 h-2 rounded-full mx-0.5 shrink-0 ${isCurrent ? 'bg-figma-blue animate-ping' : 'bg-neutral-200'
-                      }`}
-                  />
-                )}
-                <span>{step}</span>
-              </div>
-            );
-          })}
-        </div>
       </div>
     </div>
   );
@@ -106,7 +69,7 @@ export const AnalysisToast: React.FC = () => {
           <span className="mr-1.5">✓</span> Paper boundary detected
         </div>
         <div className="flex items-center text-emerald-600 font-medium">
-          <span className="mr-1.5">✓</span> Perspective corrected
+          <span className="mr-1.5">·</span> {analysisReport.perspectiveCorrected ? 'Perspective corrected' : 'Axis-aligned crop; verify paper corners'}
         </div>
         <div className="flex items-center text-neutral-700">
           <span className="mr-1.5 text-emerald-500">✓</span> {analysisReport.creaseSegmentsCount} crease segments detected

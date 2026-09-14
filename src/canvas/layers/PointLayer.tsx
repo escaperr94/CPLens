@@ -7,20 +7,24 @@ interface PointLayerProps {
   points: ReferencePoint[];
   selectedId: string | null;
   zoom: number;
+  draggable?: boolean;
   onSelectPoint: (id: string) => void;
+  onMovePoint: (id: string, point: { x: number; y: number }) => void;
   onHoverPoint: (p: ReferencePoint | null) => void;
 }
 
-export const PointLayer: React.FC<PointLayerProps> = ({
+export const PointLayer: React.FC<PointLayerProps> = React.memo(({
   points,
   selectedId,
   zoom,
+  draggable = false,
   onSelectPoint,
+  onMovePoint,
   onHoverPoint,
 }) => {
   // Figma handle: ~8-10px screen diameter regardless of zoom
-  const radius = Math.max(3.5, 4.5 / zoom);
-  const strokeW = Math.max(1, 1.5 / zoom);
+  const radius = 4.5 / zoom;
+  const strokeW = 1 / zoom;
 
   return (
     <Group>
@@ -31,9 +35,24 @@ export const PointLayer: React.FC<PointLayerProps> = ({
 
         return (
           <Group
-            key={p.id}
-            x={wx}
-            y={wy}
+          key={p.id}
+          x={wx}
+          y={wy}
+          draggable={draggable}
+          onMouseDown={(e) => { e.cancelBubble = true; }}
+          onTouchStart={(e) => { e.cancelBubble = true; }}
+          onDragStart={(e) => {
+            e.cancelBubble = true;
+            onSelectPoint(p.id);
+          }}
+          onDragEnd={(e) => {
+            e.cancelBubble = true;
+            const node = e.target;
+            onMovePoint(p.id, {
+              x: Math.max(0, Math.min(1, node.x() / BASE_PAPER_SIZE)),
+              y: Math.max(0, Math.min(1, node.y() / BASE_PAPER_SIZE)),
+            });
+          }}
             onClick={() => onSelectPoint(p.id)}
             onTap={() => onSelectPoint(p.id)}
             onMouseEnter={() => onHoverPoint(p)}
@@ -55,7 +74,7 @@ export const PointLayer: React.FC<PointLayerProps> = ({
               fill="#FFFFFF"
               stroke={p.color || '#0D99FF'}
               strokeWidth={strokeW * 1.5}
-              hitStrokeWidth={Math.max(14, 16 / zoom)}
+              hitStrokeWidth={12 / zoom}
               shadowColor="rgba(0,0,0,0.15)"
               shadowBlur={2 / zoom}
               shadowOffsetY={1 / zoom}
@@ -71,4 +90,4 @@ export const PointLayer: React.FC<PointLayerProps> = ({
       })}
     </Group>
   );
-};
+});

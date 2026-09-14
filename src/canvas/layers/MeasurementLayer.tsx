@@ -1,10 +1,11 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { Group, Line, Circle, Text, Rect } from 'react-konva';
 import { MeasurementItem } from '../../store/types';
 import { Point2D, distance, midpoint } from '../../geometry/point';
 import { approximateFraction } from '../../geometry/rational';
 import { matchOrigamiAngle } from '../../geometry/line';
 import { BASE_PAPER_SIZE } from '../transforms';
+import { clamp } from '../../geometry/point';
 
 interface MeasurementLayerProps {
   measurements: MeasurementItem[];
@@ -13,15 +14,17 @@ interface MeasurementLayerProps {
   selectedId: string | null;
   zoom: number;
   onSelect: (id: string) => void;
+  onMoveMeasurement: (id: string, endpoint: 'p1' | 'p2', point: Point2D) => void;
 }
 
-export const MeasurementLayer: React.FC<MeasurementLayerProps> = ({
+export const MeasurementLayer: React.FC<MeasurementLayerProps> = React.memo(({
   measurements,
   drawingStart,
   cursor,
   selectedId,
   zoom,
   onSelect,
+  onMoveMeasurement,
 }) => {
   const strokeW = Math.max(1, 1.5 / zoom);
   const fontSize = Math.max(10, 11 / zoom);
@@ -70,8 +73,38 @@ export const MeasurementLayer: React.FC<MeasurementLayerProps> = ({
         />
 
         {/* End ticks */}
-        <Circle x={w1.x} y={w1.y} radius={tickSize} fill="#FFFFFF" stroke={strokeColor} strokeWidth={strokeW} />
-        <Circle x={w2.x} y={w2.y} radius={tickSize} fill="#FFFFFF" stroke={strokeColor} strokeWidth={strokeW} />
+        <Circle
+          x={w1.x}
+          y={w1.y}
+          radius={tickSize}
+          fill="#FFFFFF"
+          stroke={strokeColor}
+          strokeWidth={strokeW}
+          draggable={!!id}
+          hitStrokeWidth={Math.max(10, 14 / zoom)}
+          onMouseDown={(e) => { e.cancelBubble = true; if (id) onSelect(id); }}
+          onTouchStart={(e) => { e.cancelBubble = true; if (id) onSelect(id); }}
+          onDragEnd={(e) => {
+            e.cancelBubble = true;
+            if (id) onMoveMeasurement(id, 'p1', { x: clamp(e.target.x() / BASE_PAPER_SIZE), y: clamp(e.target.y() / BASE_PAPER_SIZE) });
+          }}
+        />
+        <Circle
+          x={w2.x}
+          y={w2.y}
+          radius={tickSize}
+          fill="#FFFFFF"
+          stroke={strokeColor}
+          strokeWidth={strokeW}
+          draggable={!!id}
+          hitStrokeWidth={Math.max(10, 14 / zoom)}
+          onMouseDown={(e) => { e.cancelBubble = true; if (id) onSelect(id); }}
+          onTouchStart={(e) => { e.cancelBubble = true; if (id) onSelect(id); }}
+          onDragEnd={(e) => {
+            e.cancelBubble = true;
+            if (id) onMoveMeasurement(id, 'p2', { x: clamp(e.target.x() / BASE_PAPER_SIZE), y: clamp(e.target.y() / BASE_PAPER_SIZE) });
+          }}
+        />
 
         {/* Info label badge (Figma white card) */}
         <Group x={mid.x} y={mid.y - 12 / zoom}>
@@ -103,12 +136,15 @@ export const MeasurementLayer: React.FC<MeasurementLayerProps> = ({
     );
   };
 
+  const renderedMeasurements = useMemo(
+    () => measurements.map((m) => renderMeasurement(m.p1, m.p2, m.id, m.id === selectedId)),
+    [measurements, selectedId, zoom, onSelect, onMoveMeasurement],
+  );
+
   return (
     <Group>
-      {measurements.map((m) =>
-        renderMeasurement(m.p1, m.p2, m.id, m.id === selectedId)
-      )}
+      {renderedMeasurements}
       {drawingStart && cursor && renderMeasurement(drawingStart, cursor)}
     </Group>
   );
-};
+});

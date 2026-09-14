@@ -34,7 +34,7 @@ export const StatusBar: React.FC = () => {
         {/* Layer / Entity count */}
         <div className="flex items-center space-x-1.5 text-neutral-700 font-medium">
           <Layers className="w-3.5 h-3.5 text-neutral-400" />
-          <span className="font-mono text-[11px]">{creases.length}/{points.length || 31}</span>
+          <span className="font-mono text-[11px]">{creases.length} creases · {points.length} points</span>
         </div>
 
         {/* Coordinates */}

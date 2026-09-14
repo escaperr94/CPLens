@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { useAppStore } from '../store/projectStore';
 
 interface ShortcutOptions {
@@ -28,7 +29,29 @@ export function useShortcuts(options?: ShortcutOptions) {
     selectPoint,
     selectCrease,
     selectMeasurement,
-  } = useAppStore();
+  } = useAppStore(useShallow((state) => ({
+    activeTool: state.activeTool,
+    setActiveTool: state.setActiveTool,
+    toggleSnapping: state.toggleSnapping,
+    fitToPaper: state.fitToPaper,
+    camera: state.camera,
+    setCamera: state.setCamera,
+    grid: state.grid,
+    setGridConfig: state.setGridConfig,
+    undo: state.undo,
+    redo: state.redo,
+    selectedPointId: state.selectedPointId,
+    deletePoint: state.deletePoint,
+    selectedCreaseId: state.selectedCreaseId,
+    deleteCrease: state.deleteCrease,
+    selectedMeasurementId: state.selectedMeasurementId,
+    deleteMeasurement: state.deleteMeasurement,
+    setDrawingMeasurementStart: state.setDrawingMeasurementStart,
+    setDrawingCreaseStart: state.setDrawingCreaseStart,
+    selectPoint: state.selectPoint,
+    selectCrease: state.selectCrease,
+    selectMeasurement: state.selectMeasurement,
+  })));
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -170,4 +193,3 @@ export function useShortcuts(options?: ShortcutOptions) {
     deleteMeasurement,
   ]);
 }
-

@@ -15,8 +15,8 @@ export const CreaseLayer: React.FC<CreaseLayerProps> = React.memo(({
   selectedId,
   zoom,
 }) => {
-  const strokeW = Math.max(2, 2.5 / zoom);
-  const selectedStrokeW = Math.max(3.5, 4.5 / zoom);
+  const strokeW = 2 / zoom;
+  const selectedStrokeW = 4 / zoom;
 
   // Group creases by type for high-performance single-pass batched drawing
   const { mountains, valleys, edges, auxiliaries, selected } = useMemo(() => {
