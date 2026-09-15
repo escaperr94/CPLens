@@ -1,5 +1,5 @@
 import { splitCreaseJunctions } from '../geometry/mountainValley';
-import { extractRasterLines, inferRasterGrid } from './rasterLines';
+import { extractRasterLines, inferRasterGrid, analyzeRasterGrid, snapCreasesToOrigamiGrid } from './rasterLines';
 import { Point2D } from '../geometry/point';
 import { CreaseLine, ReferencePoint, AnalysisReport } from '../store/types';
 import { CreaseType, lineFromPoints } from '../geometry/line';
@@ -450,10 +450,16 @@ export async function analyzePixels(
 
   const size = Math.max(region.width, region.height);
   const rawLines = extractRasterLines(data, width, height, region);
-  const N = inferRasterGrid(rawLines, size);
-  const creases = splitCreaseJunctions(rawLines, {
-    tolerance: 6.5 / size,
-    gridN: N,
+  const gridInfo = analyzeRasterGrid(rawLines, size);
+  const N = gridInfo.n;
+
+  const processedLines = gridInfo.isGrid
+    ? snapCreasesToOrigamiGrid(rawLines, N, size)
+    : rawLines;
+
+  const creases = splitCreaseJunctions(processedLines, {
+    tolerance: gridInfo.isGrid ? 3.5 / size : 6.5 / size,
+    gridN: gridInfo.isGrid ? N : undefined,
     size,
   });
 

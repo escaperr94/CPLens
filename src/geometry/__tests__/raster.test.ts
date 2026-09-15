@@ -39,3 +39,25 @@ it('provides bounded quadratic candidates and converts ReferenceFinder origin',(
  expect(quadraticReference(.33333)).toBeNull();
  expect(referenceFinderCoordinates({x:.25,y:.75})).toEqual({x:.25,y:.25});
 });
+
+it('snaps wobbly raster creases to exact origami grid and merges collinear segments', async () => {
+  const { analyzeRasterGrid, snapCreasesToOrigamiGrid } = await import('../../cv/rasterLines');
+  // Create 12 horizontal & vertical lines with slight tilt (+/- 1-2px)
+  const segments: number[][] = [];
+  for (let y = 32; y <= 224; y += 32) segments.push([30, y + 0.6, 226, y - 0.4]);
+  for (let x = 32; x <= 224; x += 32) segments.push([x - 0.5, 30, x + 0.5, 226]);
+
+  const raw = await raster(segments);
+  const grid = analyzeRasterGrid(raw, 256);
+  expect(grid.isGrid).toBe(true);
+  expect(grid.n).toBe(8); // 256 / 32 = 8
+
+  const snapped = snapCreasesToOrigamiGrid(raw, 8, 256);
+  // All horizontal lines should have p1.y === p2.y exactly
+  const hLines = snapped.filter(c => Math.abs(c.p1.y - c.p2.y) < 1e-6);
+  expect(hLines.length).toBeGreaterThanOrEqual(6);
+  for (const h of hLines) {
+    expect(h.p1.y).toBe(h.p2.y);
+    expect((h.p1.y * 8) % 1).toBeCloseTo(0, 5);
+  }
+});

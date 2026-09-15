@@ -113,12 +113,224 @@ export function extractRasterLines(data: Uint8ClampedArray, width: number, heigh
   return lines;
 }
 
-export function inferRasterGrid(lines: CreaseLine[], size: number): number {
+export interface GridInference {
+  n: number;
+  confidence: number;
+  isGrid: boolean;
+}
+
+export function analyzeRasterGrid(lines: CreaseLine[], size: number): GridInference {
   const values: number[] = [];
   for (const crease of lines) {
-    if (Math.abs(crease.p1.x - crease.p2.x) < 2 / size && Math.abs(crease.p1.y - crease.p2.y) > 10 / size) values.push((crease.p1.x + crease.p2.x) / 2);
-    if (Math.abs(crease.p1.y - crease.p2.y) < 2 / size && Math.abs(crease.p1.x - crease.p2.x) > 10 / size) values.push((crease.p1.y + crease.p2.y) / 2);
+    if (Math.abs(crease.p1.x - crease.p2.x) < 3.5 / size && Math.abs(crease.p1.y - crease.p2.y) > 10 / size) values.push((crease.p1.x + crease.p2.x) / 2);
+    if (Math.abs(crease.p1.y - crease.p2.y) < 3.5 / size && Math.abs(crease.p1.x - crease.p2.x) > 10 / size) values.push((crease.p1.y + crease.p2.y) / 2);
   }
-  const unique = [...new Set(values.filter(v=>v>.01&&v<.99).map(v=>Math.round(v*size)/size))];
-  return [8,12,16,20,24,32,40,48,64,96,128].map(n=>({n,score:unique.length?unique.reduce((s,v)=>s+Math.min(5,Math.abs(v-Math.round(v*n)/n)*size),0)/unique.length+.015*n:n})).sort((a,b)=>a.score-b.score)[0].n;
+  const unique = [...new Set(values.filter(v => v > 0.01 && v < 0.99).map(v => Math.round(v * size) / size))];
+  if (unique.length < 5) {
+    return { n: 32, confidence: 0, isGrid: false };
+  }
+  const candidates = [8, 12, 16, 20, 24, 32, 40, 48, 64, 96, 128].map(n => {
+    const avgResidual = unique.reduce((s, v) => s + Math.abs(v - Math.round(v * n) / n) * size, 0) / unique.length;
+    return { n, avgResidual, score: avgResidual + 0.015 * n };
+  }).sort((a, b) => a.score - b.score);
+
+  const best = candidates[0];
+  const isGrid = best.avgResidual <= 1.8 && unique.length >= 5;
+  const confidence = Math.max(0, Math.min(1, 1 - best.avgResidual / 2.5));
+  return { n: best.n, confidence, isGrid };
+}
+
+export function inferRasterGrid(lines: CreaseLine[], size: number): number {
+  return analyzeRasterGrid(lines, size).n;
+}
+
+/**
+ * Snaps detected raster lines to the exact origami grid lattice (box-pleating constraints).
+ * Eliminates wobble, tilts, small breaks, and false spurs.
+ */
+export function snapCreasesToOrigamiGrid(lines: CreaseLine[], N: number, size: number): CreaseLine[] {
+  const snapped: CreaseLine[] = [];
+
+  for (const c of lines) {
+    const dx = c.p2.x - c.p1.x;
+    const dy = c.p2.y - c.p1.y;
+    const len = Math.hypot(dx, dy);
+    if (len * size < 4.0) continue; // discard tiny noise < 4px
+
+    const angle = (Math.atan2(dy, dx) * 180 / Math.PI + 180) % 180;
+
+    // 1. Check if near horizontal (within 14 degrees of 0 or 180)
+    if (angle < 14 || angle > 166) {
+      const midY = (c.p1.y + c.p2.y) / 2;
+      const gridY = Math.round(midY * N) / N;
+      if (Math.abs(midY - gridY) * size <= 3.8) {
+        const minX = Math.min(c.p1.x, c.p2.x);
+        const maxX = Math.max(c.p1.x, c.p2.x);
+        const gridX1 = Math.max(0, Math.min(1, Math.round(minX * N) / N));
+        const gridX2 = Math.max(0, Math.min(1, Math.round(maxX * N) / N));
+        if (gridX2 > gridX1) {
+          snapped.push({
+            ...c,
+            p1: { x: gridX1, y: gridY },
+            p2: { x: gridX2, y: gridY },
+            equation: lineFromPoints({ x: gridX1, y: gridY }, { x: gridX2, y: gridY }),
+          });
+          continue;
+        }
+      }
+    }
+
+    // 2. Check if near vertical (within 14 degrees of 90)
+    if (Math.abs(angle - 90) < 14) {
+      const midX = (c.p1.x + c.p2.x) / 2;
+      const gridX = Math.round(midX * N) / N;
+      if (Math.abs(midX - gridX) * size <= 3.8) {
+        const minY = Math.min(c.p1.y, c.p2.y);
+        const maxY = Math.max(c.p1.y, c.p2.y);
+        const gridY1 = Math.max(0, Math.min(1, Math.round(minY * N) / N));
+        const gridY2 = Math.max(0, Math.min(1, Math.round(maxY * N) / N));
+        if (gridY2 > gridY1) {
+          snapped.push({
+            ...c,
+            p1: { x: gridX, y: gridY1 },
+            p2: { x: gridX, y: gridY2 },
+            equation: lineFromPoints({ x: gridX, y: gridY1 }, { x: gridX, y: gridY2 }),
+          });
+          continue;
+        }
+      }
+    }
+
+    // 3. Check if near diagonal 45 deg (dy/dx ~ 1)
+    if (Math.abs(angle - 45) < 14) {
+      const midD = (c.p1.y - c.p1.x + c.p2.y - c.p2.x) / 2;
+      const gridD = Math.round(midD * N) / N;
+      if (Math.abs(midD - gridD) * size <= 3.8) {
+        const minX = Math.min(c.p1.x, c.p2.x);
+        const maxX = Math.max(c.p1.x, c.p2.x);
+        const gX1 = Math.max(0, Math.min(1, Math.round(minX * N) / N));
+        const gX2 = Math.max(0, Math.min(1, Math.round(maxX * N) / N));
+        const gY1 = gX1 + gridD;
+        const gY2 = gX2 + gridD;
+        if (gX2 > gX1 && gY1 >= 0 && gY1 <= 1 && gY2 >= 0 && gY2 <= 1) {
+          snapped.push({
+            ...c,
+            p1: { x: gX1, y: gY1 },
+            p2: { x: gX2, y: gY2 },
+            equation: lineFromPoints({ x: gX1, y: gY1 }, { x: gX2, y: gY2 }),
+          });
+          continue;
+        }
+      }
+    }
+
+    // 4. Check if near anti-diagonal 135 deg (dy/dx ~ -1)
+    if (Math.abs(angle - 135) < 14) {
+      const midS = (c.p1.y + c.p1.x + c.p2.y + c.p2.x) / 2;
+      const gridS = Math.round(midS * N) / N;
+      if (Math.abs(midS - gridS) * size <= 3.8) {
+        const minX = Math.min(c.p1.x, c.p2.x);
+        const maxX = Math.max(c.p1.x, c.p2.x);
+        const gX1 = Math.max(0, Math.min(1, Math.round(minX * N) / N));
+        const gX2 = Math.max(0, Math.min(1, Math.round(maxX * N) / N));
+        const gY1 = gridS - gX1;
+        const gY2 = gridS - gX2;
+        if (gX2 > gX1 && gY1 >= 0 && gY1 <= 1 && gY2 >= 0 && gY2 <= 1) {
+          snapped.push({
+            ...c,
+            p1: { x: gX1, y: gY1 },
+            p2: { x: gX2, y: gY2 },
+            equation: lineFromPoints({ x: gX1, y: gY1 }, { x: gX2, y: gY2 }),
+          });
+          continue;
+        }
+      }
+    }
+
+    // Retain off-grid lines or 22.5 deg lines if they are sufficiently long (> 20px)
+    if (len * size >= 20.0) {
+      snapped.push(c);
+    }
+  }
+
+  return mergeCollinearGridSegments(snapped, N);
+}
+
+/**
+ * Merges overlapping or contiguous collinear segments on the same grid line.
+ */
+export function mergeCollinearGridSegments(lines: CreaseLine[], N: number): CreaseLine[] {
+  const groups = new Map<string, CreaseLine[]>();
+  for (const c of lines) {
+    let key = '';
+    if (Math.abs(c.p1.y - c.p2.y) < 1e-6) {
+      key = `H_${c.type}_${c.p1.y.toFixed(5)}`;
+    } else if (Math.abs(c.p1.x - c.p2.x) < 1e-6) {
+      key = `V_${c.type}_${c.p1.x.toFixed(5)}`;
+    } else if (Math.abs((c.p2.y - c.p1.y) - (c.p2.x - c.p1.x)) < 1e-5) {
+      key = `D1_${c.type}_${(c.p1.y - c.p1.x).toFixed(5)}`;
+    } else if (Math.abs((c.p2.y - c.p1.y) + (c.p2.x - c.p1.x)) < 1e-5) {
+      key = `D2_${c.type}_${(c.p1.y + c.p1.x).toFixed(5)}`;
+    } else {
+      key = `OTHER_${c.id}`;
+    }
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key)!.push(c);
+  }
+
+  const merged: CreaseLine[] = [];
+  for (const [key, segs] of groups) {
+    if (key.startsWith('OTHER') || segs.length <= 1) {
+      merged.push(...segs);
+      continue;
+    }
+    const isV = key.startsWith('V');
+    const intervals = segs.map(s => {
+      const a = isV ? Math.min(s.p1.y, s.p2.y) : Math.min(s.p1.x, s.p2.x);
+      const b = isV ? Math.max(s.p1.y, s.p2.y) : Math.max(s.p1.x, s.p2.x);
+      return [a, b] as [number, number];
+    });
+    intervals.sort((a, b) => a[0] - b[0]);
+
+    const mergedIntervals: [number, number][] = [intervals[0]];
+    for (let k = 1; k < intervals.length; k++) {
+      const prev = mergedIntervals[mergedIntervals.length - 1];
+      const curr = intervals[k];
+      if (curr[0] <= prev[1] + (1 / N + 1e-4)) {
+        prev[1] = Math.max(prev[1], curr[1]);
+      } else {
+        mergedIntervals.push(curr);
+      }
+    }
+
+    const sample = segs[0];
+    for (let m = 0; m < mergedIntervals.length; m++) {
+      const [start, end] = mergedIntervals[m];
+      let p1: { x: number; y: number }, p2: { x: number; y: number };
+      if (key.startsWith('H')) {
+        p1 = { x: start, y: sample.p1.y };
+        p2 = { x: end, y: sample.p1.y };
+      } else if (key.startsWith('V')) {
+        p1 = { x: sample.p1.x, y: start };
+        p2 = { x: sample.p1.x, y: end };
+      } else if (key.startsWith('D1')) {
+        const d = sample.p1.y - sample.p1.x;
+        p1 = { x: start, y: start + d };
+        p2 = { x: end, y: end + d };
+      } else {
+        const s = sample.p1.y + sample.p1.x;
+        p1 = { x: start, y: s - start };
+        p2 = { x: end, y: s - end };
+      }
+      merged.push({
+        ...sample,
+        id: segs.length === 1 ? sample.id : `${sample.id}_m${m}`,
+        p1,
+        p2,
+        equation: lineFromPoints(p1, p2),
+      });
+    }
+  }
+
+  return merged;
 }
