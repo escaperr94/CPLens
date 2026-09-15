@@ -8,7 +8,9 @@ function put(value){if(waiting){const resolve=waiting;waiting=null;resolve(value
 self.onmessage=({data})=>{
   query=data;
   // Bounded database: rank 4, all seven Huzita-Justin axioms, unit square.
-  const settings=[0,0,1,1,4,50000,50000,2,3,7,6,5,4,1,1,5000,5000,5000,5000,.1,.342,1,0,0];
+  const rank=data.rank===5?5:4;
+  const cap=rank===5?300000:50000;
+  const settings=[0,0,1,1,rank,cap,cap,2,3,7,6,5,4,1,1,5000,5000,5000,5000,.1,.342,1,0,0];
   settings.forEach(put);
   initialize({
     locateFile:name=>new URL(name,import.meta.url).href,

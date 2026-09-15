@@ -1,3 +1,4 @@
+import { splitCreaseJunctions } from '../geometry/mountainValley';
 import { extractRasterLines, inferRasterGrid } from './rasterLines';
 import { Point2D } from '../geometry/point';
 import { CreaseLine, ReferencePoint, AnalysisReport } from '../store/types';
@@ -444,11 +445,11 @@ export async function analyzePixels(
   await new Promise((r) => setTimeout(r, 60));
 
   // Step 4 & 5: Inferring grid & detecting crease lines...
-  onProgress?.('Detecting pixel centerlines (including 22.5°)...', 60);
+  onProgress?.('Detecting colored / monochrome centerlines...', 60);
   await new Promise((r) => setTimeout(r, 60));
 
   // True base grid for origami CP is 32x32
-  const creases = await extractRasterLines(data, width, height, region);
+  const creases = splitCreaseJunctions(extractRasterLines(data, width, height, region), 1.5 / Math.max(region.width, region.height));
   const N = inferRasterGrid(creases, Math.max(region.width, region.height));
 
   onProgress?.('Detecting and vectorizing crease lines...', 75);

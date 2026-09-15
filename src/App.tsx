@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { TopNav } from './ui/TopNav';
 import { Toolbar } from './ui/Toolbar';
@@ -40,6 +40,14 @@ export const App: React.FC = () => {
     finishAnalysis: state.finishAnalysis,
   })));
 
+  const analysisController=useRef<AbortController|null>(null);
+  useEffect(()=>{
+    const unsubscribe=useAppStore.subscribe((state,previous)=>{
+      if(state.image.url!==previous.image.url){analysisController.current?.abort();useAppStore.setState({isAnalyzing:false,analysisReport:null});}
+    });
+    return ()=>{unsubscribe();analysisController.current?.abort();};
+  },[]);
+
   // Helper to convert Image to HTMLCanvasElement
   const imageToCanvas = (img: HTMLImageElement): HTMLCanvasElement => {
     const canvas = document.createElement('canvas');
@@ -55,13 +63,18 @@ export const App: React.FC = () => {
   // Run automatic analysis pipeline on an image
   const analyzeImage = useCallback(
     async (imgElement: HTMLImageElement) => {
+      const source=useAppStore.getState().image.url;
+      if(!source||imgElement.src!==new URL(source,window.location.href).href)return;
+      analysisController.current?.abort();
+      const controller=new AbortController();analysisController.current=controller;
       try {
         startAnalysis('Initializing computer vision engine...');
         const canvas = imageToCanvas(imgElement);
 
         const result = await runCPAnalysisPipeline(canvas, (step, percent) => {
-          updateAnalysisProgress(step, percent);
-        });
+          if(!controller.signal.aborted)updateAnalysisProgress(step, percent);
+        },controller.signal);
+        if(controller.signal.aborted||useAppStore.getState().image.url!==source)return;
 
         // Apply homography rectification to the paper
         const { toNormalized, toImage } = createUnitSquareHomography(result.corners);
@@ -93,6 +106,7 @@ export const App: React.FC = () => {
           fitToPaper(window.innerWidth - 360, window.innerHeight - 80);
         }, 100);
       } catch (err) {
+        if(controller.signal.aborted)return;
         useAppStore.setState({ isAnalyzing: false });
         console.error('Analysis error:', err);
         alert('Could not complete automatic analysis. Please try manual calibration.');
@@ -103,14 +117,15 @@ export const App: React.FC = () => {
 
   // Trigger analysis for current loaded image
   const handleRunAutoAnalysis = useCallback(() => {
-    if (!image.url) return;
+    const currentUrl=useAppStore.getState().image.url;
+    if (!currentUrl) return;
     const img = new Image();
     img.crossOrigin = 'anonymous';
-    img.src = image.url;
+    img.src = currentUrl;
     img.onload = () => {
       analyzeImage(img);
     };
-  }, [image.url, analyzeImage]);
+  }, [analyzeImage]);
 
   // Load and auto-vectorize CP.png
   const handleLoadCP = useCallback(() => {
@@ -182,8 +197,11 @@ export const App: React.FC = () => {
 
   // Load CP.png automatically on initial mount
   useEffect(() => {
-    handleLoadCP();
-  }, [handleLoadCP]);
+    let cancelled=false;const img=new Image();
+    img.onload=()=>{if(cancelled||useAppStore.getState().image.url)return;loadImage('/CP.png','CP.png',img.naturalWidth,img.naturalHeight);analyzeImage(img);};
+    img.src='/CP.png';
+    return ()=>{cancelled=true;};
+  }, [loadImage,analyzeImage]);
 
   // Global paste handler: paste any screenshot directly into the app!
   useEffect(() => {

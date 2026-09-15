@@ -37,6 +37,7 @@ export interface ReferencePoint {
 }
 
 export interface CreaseLine extends Segment {
+  assignmentSource?: 'color' | 'manual' | 'inferred';
   id: string;
   p1: Point2D;
   p2: Point2D;

@@ -164,7 +164,7 @@ export function exportSvg(state: ProjectState, svgSize: number = 1000) {
     } else if (c.type === 'edge') {
       stroke = '#18181B';
     } else {
-      stroke = '#9333EA';
+      stroke = c.type === 'unknown' ? '#52525B' : '#9333EA';
     }
 
     lines.push(

@@ -19,11 +19,12 @@ export const CreaseLayer: React.FC<CreaseLayerProps> = React.memo(({
   const selectedStrokeW = 4 / zoom;
 
   // Group creases by type for high-performance single-pass batched drawing
-  const { mountains, valleys, edges, auxiliaries, selected } = useMemo(() => {
+  const { mountains, valleys, edges, auxiliaries, unknowns, selected } = useMemo(() => {
     const m: CreaseLine[] = [];
     const v: CreaseLine[] = [];
     const e: CreaseLine[] = [];
     const a: CreaseLine[] = [];
+    const u: CreaseLine[] = [];
     let sel: CreaseLine | null = null;
 
     for (let i = 0; i < creases.length; i++) {
@@ -41,12 +42,15 @@ export const CreaseLayer: React.FC<CreaseLayerProps> = React.memo(({
         case 'edge':
           e.push(c);
           break;
-        default:
+        case 'auxiliary':
           a.push(c);
+          break;
+        default:
+          u.push(c);
           break;
       }
     }
-    return { mountains: m, valleys: v, edges: e, auxiliaries: a, selected: sel };
+    return { mountains: m, valleys: v, edges: e, auxiliaries: a, unknowns: u, selected: sel };
   }, [creases, selectedId]);
 
   return (
@@ -124,6 +128,26 @@ export const CreaseLayer: React.FC<CreaseLayerProps> = React.memo(({
             context.fillStrokeShape(shape);
           }}
           stroke="#9333EA"
+          strokeWidth={strokeW}
+          lineCap="round"
+          lineJoin="round"
+          listening={false}
+        />
+      )}
+
+      {/* Unassigned monochrome creases */}
+      {unknowns.length > 0 && (
+        <Shape
+          sceneFunc={(context, shape) => {
+            context.beginPath();
+            for (let i = 0; i < unknowns.length; i++) {
+              const c = unknowns[i];
+              context.moveTo(c.p1.x * BASE_PAPER_SIZE, c.p1.y * BASE_PAPER_SIZE);
+              context.lineTo(c.p2.x * BASE_PAPER_SIZE, c.p2.y * BASE_PAPER_SIZE);
+            }
+            context.fillStrokeShape(shape);
+          }}
+          stroke="#52525B"
           strokeWidth={strokeW}
           lineCap="round"
           lineJoin="round"

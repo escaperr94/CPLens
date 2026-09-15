@@ -2,177 +2,100 @@ import { CreaseLine } from '../store/types';
 import { lineFromPoints } from '../geometry/line';
 
 type Region = { x0: number; y0: number; width: number; height: number };
+type Run = { x1:number;y1:number;x2:number;y2:number;length:number;type:number;confidence:number;score:number };
 
-/** Extract straight center-lines without snapping endpoints to a guessed lattice. */
+/** Hough proposals followed by continuous pixel support and exclusive ink ownership.
+ * Work in image pixels, not a guessed lattice. Black ink carries no M/V information.
+ */
 export function extractRasterLines(data: Uint8ClampedArray, width: number, height: number, region: Region): CreaseLine[] {
-  const pixels: { x: number; y: number; type: number }[] = [];
   const mask = new Uint8Array(width * height);
-  for (let y = Math.ceil(region.y0); y <= Math.min(height - 1, region.y0 + region.height); y++) {
-    for (let x = Math.ceil(region.x0); x <= Math.min(width - 1, region.x0 + region.width); x++) {
-      const i = (y * width + x) * 4;
-      const r = data[i], g = data[i + 1], b = data[i + 2];
-      if (data[i + 3] < 80) continue;
-      // The screenshots may contain a pale blue construction grid. Requiring
-      // low luminance keeps that grid out of the CP vector while retaining the
-      // darker antialiased crease centre pixels.
-      // CP strokes are chromatic. Dark pixels are deliberately ignored here:
-      // they are usually borders, text annotations, or cursor labels rather
-      // than fold lines and would otherwise create convincing false vectors.
-      const type = r - Math.max(g, b) > 18 && r + g + b < 570 ? 1 :
-        b - Math.max(r, g) > 18 && r + g + b < 570 ? 2 : 0;
-      if (!type) continue;
-      mask[y * width + x] = type;
-      pixels.push({ x: x - region.x0, y: y - region.y0, type });
+  const groups: {x:number;y:number}[][] = [[],[],[],[]];
+  for(let y=Math.max(0,Math.ceil(region.y0));y<=Math.min(height-1,region.y0+region.height);y++) {
+    for(let x=Math.max(0,Math.ceil(region.x0));x<=Math.min(width-1,region.x0+region.width);x++) {
+      const i=(y*width+x)*4, r=data[i],g=data[i+1],b=data[i+2];
+      if(data[i+3]<128) continue;
+      const type=r-Math.max(g,b)>18&&r+g+b<570?1:b-Math.max(r,g)>18&&r+g+b<570?2:Math.max(r,g,b)-Math.min(r,g,b)<35&&r+g+b<660?3:0;
+      if(type){mask[y*width+x]=type;groups[type].push({x:x-region.x0,y:y-region.y0});}
     }
   }
-  const lines: CreaseLine[] = [];
-  const size = Math.max(region.width, region.height);
-  const at = (x: number, y: number, type: number) => {
-    const px = Math.round(region.x0 + x), py = Math.round(region.y0 + y);
-    return px >= 0 && px < width && py >= 0 && py < height && mask[py * width + px] === type;
+  // On a colored diagram, neutral ink is usually border/text. On monochrome
+  // drawings it is the source geometry and must never be randomly colorized.
+  const colored=groups[1].length+groups[2].length;
+  const types=colored>Math.max(30,groups[3].length*.1)?[1,2]:[3];
+  const size=Math.max(region.width,region.height), radius=Math.ceil(Math.hypot(region.width,region.height))+3;
+  const minLength=Math.max(5,size/160), candidates:Run[]=[];
+  const at=(x:number,y:number,type:number)=>{
+    const px=Math.round(x+region.x0),py=Math.round(y+region.y0);
+    return px>=0&&px<width&&py>=0&&py<height&&mask[py*width+px]===type;
   };
-
-  // Reject directions that only contain incidental pixels from crossings or
-  // annotations. The threshold is relative, so a page containing only a
-  // 22.5° stroke still keeps that direction while a normal orthogonal CP does
-  // not turn every corner into a diagonal vector.
-  const radius = Math.ceil(size * 1.42) + 3;
-  const directionStrength = new Float32Array(8);
-  for (let direction = 0; direction < 8; direction++) {
-    const angle = direction * Math.PI / 8;
-    const nx = -Math.sin(angle), ny = Math.cos(angle);
-    for (const type of [1, 2]) {
-      const votes = new Float32Array(radius * 2 + 1);
-      for (const p of pixels) if (p.type === type) votes[Math.round(p.x * nx + p.y * ny) + radius]++;
-      for (let i = 0; i < votes.length; i++) directionStrength[direction] = Math.max(directionStrength[direction], votes[i]);
-    }
-  }
-  const strongestDirection = Math.max(...directionStrength);
-  const activeDirectionThreshold = Math.max(24, strongestDirection * 0.22);
-
-  // Scan eight directions, including 22.5°/67.5°, and build supported runs.
-  for (let direction = 0; direction < 8; direction++) {
-    const weakDirection = directionStrength[direction] < activeDirectionThreshold;
-    const angle = direction * Math.PI / 8;
-    const ux = Math.cos(angle), uy = Math.sin(angle), nx = -uy, ny = ux;
-    const radius = Math.ceil(size * 1.42) + 3;
-    for (const type of [1, 2]) {
-      const votes = new Float32Array(radius * 2 + 1);
-      for (const p of pixels) if (p.type === type) votes[Math.round(p.x * nx + p.y * ny) + radius]++;
-      const peaks: number[] = [];
-      // A short accumulator peak is usually an anti-aliased corner or a
-      // label/grid artefact. Keep peaks with enough ink to represent a real
-      // crease; short one-cell creases are still retained by the length rule
-      // below.
-      for (let i = 2; i < votes.length - 2; i++) if (votes[i] >= 12 && votes[i] >= votes[i - 1] && votes[i] > votes[i + 1]) peaks.push(i);
-      peaks.sort((a, b) => votes[b] - votes[a]);
-      const used = new Set<number>();
-      for (const peak of peaks) {
-        if (used.has(peak)) continue;
-        for (let d = -2; d <= 2; d++) used.add(peak + d);
-        let weight = 0, sum = 0;
-        for (let d = -1; d <= 1; d++) { weight += votes[peak + d]; sum += (peak + d - radius) * votes[peak + d]; }
-        const rho = sum / weight;
-        let start = NaN, last = NaN, hits = 0;
-        const flush = () => {
-          const span = last - start;
-          const confidence = hits / (span + 1);
-          if (Number.isNaN(start) || span < Math.max(14, size / 44) || confidence < 0.72) return;
-          // A weak direction is commonly produced by a crossing. Preserve it
-          // only when it forms a long, nearly continuous stroke, which keeps
-          // genuine isolated 22.5° lines without reintroducing corner noise.
-          if (weakDirection && (span < Math.max(36, size / 8) || confidence < 0.86)) return;
-          const p1 = { x: (nx * rho + ux * start) / region.width, y: (ny * rho + uy * start) / region.height };
-          const p2 = { x: (nx * rho + ux * last) / region.width, y: (ny * rho + uy * last) / region.height };
-          for (const p of [p1, p2]) { p.x = Math.max(0, Math.min(1, p.x)); p.y = Math.max(0, Math.min(1, p.y)); }
-          lines.push({ id: `raster_${lines.length + 1}`, p1, p2, type: type === 1 ? 'mountain' : type === 2 ? 'valley' : 'unknown', confirmed: false, confidence, equation: lineFromPoints(p1, p2) });
-        };
-        for (let t = -radius; t <= radius * 2; t++) {
-          const x = nx * rho + ux * t, y = ny * rho + uy * t;
-          let supported = false;
-          if (x >= 0 && x <= region.width && y >= 0 && y <= region.height) {
-            for (const off of [-1, 0, 1]) if (at(x + nx * off, y + ny * off, type)) { supported = true; break; }
-          }
-          if (supported) { if (Number.isNaN(start)) start = t; last = t; hits++; }
-          else if (!Number.isNaN(start) && t - last > 16) { flush(); start = NaN; hits = 0; }
+  // 1-degree proposals plus exact common origami slopes. Accepted runs are
+  // fitted to their own ink, so arbitrary angles do not become 22.5° stairs.
+  const angles=[...Array.from({length:180},(_,i)=>i*Math.PI/180),...Array.from({length:8},(_,i)=>i*Math.PI/8),...[-3,-2,-.5,-1/3,1/3,.5,2,3].map(s=>(Math.atan(s)+Math.PI)%Math.PI)];
+  for(const type of types) for(const angle of angles){
+    const ux=Math.cos(angle),uy=Math.sin(angle),nx=-uy,ny=ux;
+    const votes=new Uint32Array(radius*2+1);
+    for(const p of groups[type]) votes[Math.round(p.x*nx+p.y*ny)+radius]++;
+    for(let peak=1;peak<votes.length-1;peak++){
+      if(votes[peak]<minLength*.8||votes[peak]<votes[peak-1]||votes[peak]<=votes[peak+1])continue;
+      const rho=((peak-1-radius)*votes[peak-1]+(peak-radius)*votes[peak]+(peak+1-radius)*votes[peak+1])/(votes[peak-1]+votes[peak]+votes[peak+1]);
+      let start=NaN,last=NaN,hits=0,ink=0;
+      const flush=()=>{
+        const length=last-start,confidence=hits/(length+1);
+        if(!Number.isFinite(start)||length<minLength||confidence<.88)return;
+        candidates.push({x1:nx*rho+ux*start,y1:ny*rho+uy*start,x2:nx*rho+ux*last,y2:ny*rho+uy*last,length,type,confidence,score:length*(ink/(length+1))**3});
+      };
+      // Clip the infinite proposal before sampling; no scan through empty space.
+      let lo=-radius,hi=radius;
+      for(const [base,delta,limit] of [[nx*rho,ux,region.width],[ny*rho,uy,region.height]]){
+        if(Math.abs(delta)<1e-9){if(base<0||base>limit){hi=lo-1;break;}}
+        else {const a=-base/delta,b=(limit-base)/delta;lo=Math.max(lo,Math.min(a,b));hi=Math.min(hi,Math.max(a,b));}
+      }
+      for(let t=Math.ceil(lo);t<=Math.floor(hi);t++){
+        const x=nx*rho+ux*t,y=ny*rho+uy*t;
+        const off=type===3?.35:.65;
+        const hit=at(x,y,type)||at(x+nx*off,y+ny*off,type)||at(x-nx*off,y-ny*off,type);
+        if(hit){if(!Number.isFinite(start))start=t;last=t;hits++;
+          const px=Math.round(region.x0+x),py=Math.round(region.y0+y),k=(py*width+px)*4;
+          ink+=Math.max(0,1-(data[k]+data[k+1]+data[k+2])/765);
         }
-        flush();
+        else if(Number.isFinite(start)&&t-last>(type===3?2:8)){flush();start=NaN;hits=0;ink=0;}
       }
+      flush();
     }
   }
-
-  // Deduplicate parallel passes and merge fragments with a small genuine gap.
-  lines.sort((a, b) => Math.hypot(b.p2.x - b.p1.x, b.p2.y - b.p1.y) - Math.hypot(a.p2.x - a.p1.x, a.p2.y - a.p1.y));
-  const merged: CreaseLine[] = [];
-  const parallelTolerance = 0.006, distanceTolerance = 8 / size, gapTolerance = 18 / size;
-  for (const line of lines) {
-    const eq = line.equation!;
-    let joined = false;
-    for (const other of merged) {
-      if (other.type !== line.type) continue;
-      const oe = other.equation!;
-      if (Math.abs(eq.a * oe.b - eq.b * oe.a) > parallelTolerance) continue;
-      if (Math.max(Math.abs(oe.a * line.p1.x + oe.b * line.p1.y + oe.c), Math.abs(oe.a * line.p2.x + oe.b * line.p2.y + oe.c)) > distanceTolerance) continue;
-      const dx = other.p2.x - other.p1.x, dy = other.p2.y - other.p1.y, length = Math.hypot(dx, dy);
-      if (!length) continue;
-      const ux = dx / length, uy = dy / length;
-      const t1 = (line.p1.x - other.p1.x) * ux + (line.p1.y - other.p1.y) * uy;
-      const t2 = (line.p2.x - other.p1.x) * ux + (line.p2.y - other.p1.y) * uy;
-      const lo = Math.min(t1, t2), hi = Math.max(t1, t2);
-      if (lo > length + gapTolerance || hi < -gapTolerance) continue;
-      const start = Math.min(0, lo), end = Math.max(length, hi), origin = { ...other.p1 };
-      other.p1 = { x: origin.x + ux * start, y: origin.y + uy * start };
-      other.p2 = { x: origin.x + ux * end, y: origin.y + uy * end };
-      other.equation = lineFromPoints(other.p1, other.p2);
-      joined = true;
-      break;
-    }
-    if (!joined) merged.push(line);
-  }
-  merged.sort((a, b) => Math.hypot(b.p2.x - b.p1.x, b.p2.y - b.p1.y) - Math.hypot(a.p2.x - a.p1.x, a.p2.y - a.p1.y));
-  const kept: CreaseLine[] = [];
-  for (const line of merged) {
-    const eq = line.equation!;
-    const duplicate = kept.some((other) => {
-      if (other.type !== line.type) return false;
-      const oe = other.equation!;
-      if (Math.abs(eq.a * oe.b - eq.b * oe.a) > 0.004) return false;
-      if (Math.max(Math.abs(oe.a * line.p1.x + oe.b * line.p1.y + oe.c), Math.abs(oe.a * line.p2.x + oe.b * line.p2.y + oe.c)) > 3 / size) return false;
-      const dx = other.p2.x - other.p1.x, dy = other.p2.y - other.p1.y, length = Math.hypot(dx, dy);
-      if (!length) return false;
-      const ux = dx / length, uy = dy / length;
-      const t1 = (line.p1.x - other.p1.x) * ux + (line.p1.y - other.p1.y) * uy;
-      const t2 = (line.p2.x - other.p1.x) * ux + (line.p2.y - other.p1.y) * uy;
-      return Math.min(t1, t2) >= -0.02 && Math.max(t1, t2) <= length + 0.02;
-    });
-    if (!duplicate) kept.push(line);
-  }
-  const claimed = new Uint8Array(width * height);
-  const unique: CreaseLine[] = [];
-  for (const line of kept) {
-    const x1 = region.x0 + line.p1.x * region.width, y1 = region.y0 + line.p1.y * region.height;
-    const x2 = region.x0 + line.p2.x * region.width, y2 = region.y0 + line.p2.y * region.height;
-    const length = Math.hypot(x2 - x1, y2 - y1), samples = Math.max(2, Math.ceil(length));
-    const type = line.type === 'mountain' ? 1 : 2;
-    const footprint = new Set<number>();
-    let supported = 0, fresh = 0;
-    for (let i = 0; i <= samples; i++) {
-      const x = Math.round(x1 + (x2 - x1) * i / samples), y = Math.round(y1 + (y2 - y1) * i / samples);
-      let hit = false, unused = false;
-      for (let oy = -1; oy <= 1; oy++) for (let ox = -1; ox <= 1; ox++) {
-        const px = x + ox, py = y + oy;
-        if (px < 0 || px >= width || py < 0 || py >= height) continue;
-        const index = py * width + px;
-        if (mask[index] === type) { hit = true; footprint.add(index); if (!claimed[index]) unused = true; }
+  candidates.sort((a,b)=>b.score-a.score);
+  const claimed=new Uint8Array(width*height), lines:CreaseLine[]=[];
+  for(const run of candidates){
+    const ux=(run.x2-run.x1)/run.length,uy=(run.y2-run.y1)/run.length;
+    const footprint=new Set<number>();let fresh=0,hits=0;
+    const points:{x:number;y:number}[]=[];
+    for(let t=0;t<=run.length;t++){
+      const x=run.x1+ux*t,y=run.y1+uy*t;
+      let hit=false,unused=false;
+      for(let off=-1;off<=1;off++){
+        const px=Math.round(region.x0+x-uy*off),py=Math.round(region.y0+y+ux*off);
+        if(px<0||px>=width||py<0||py>=height)continue;
+        const k=py*width+px;
+        if(mask[k]!==run.type)continue;
+        hit=true;unused ||= !claimed[k];
+        if(!footprint.has(k)){footprint.add(k);points.push({x:px-region.x0,y:py-region.y0});}
       }
-      if (hit) supported++;
-      if (unused) fresh++;
+      if(hit)hits++;if(unused)fresh++;
     }
-    if (supported / (samples + 1) < 0.35 || fresh / Math.max(1, supported) < 0.55) continue;
-    for (const index of footprint) claimed[index] = 1;
-    unique.push(line);
+    // Long lines own crossing ink first. Short spurs from junctions have very
+    // little independent support and are discarded instead of being exported.
+    if(fresh/Math.max(1,hits)<.5||fresh<minLength*.5)continue;
+    let cx=0,cy=0;for(const p of points){cx+=p.x;cy+=p.y;}cx/=points.length;cy/=points.length;
+    let xx=0,yy=0,xy=0;for(const p of points){const x=p.x-cx,y=p.y-cy;xx+=x*x;yy+=y*y;xy+=x*y;}
+    const theta=.5*Math.atan2(2*xy,xx-yy),fx=Math.cos(theta),fy=Math.sin(theta);
+    let lo=Infinity,hi=-Infinity;for(const p of points){const t=(p.x-cx)*fx+(p.y-cy)*fy;lo=Math.min(lo,t);hi=Math.max(hi,t);}
+    const p1={x:Math.max(0,Math.min(1,(cx+lo*fx)/region.width)),y:Math.max(0,Math.min(1,(cy+lo*fy)/region.height))};
+    const p2={x:Math.max(0,Math.min(1,(cx+hi*fx)/region.width)),y:Math.max(0,Math.min(1,(cy+hi*fy)/region.height))};
+    for(const k of footprint){const px=k%width,py=Math.floor(k/width);for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){const x=px+dx,y=py+dy;if(x>=0&&x<width&&y>=0&&y<height)claimed[y*width+x]=1;}}
+    const boundary=run.type===3&&((p1.x<.004&&p2.x<.004)||(p1.x>.996&&p2.x>.996)||(p1.y<.004&&p2.y<.004)||(p1.y>.996&&p2.y>.996));
+    lines.push({id:`raster_${lines.length+1}`,p1,p2,type:boundary?'edge':run.type===1?'mountain':run.type===2?'valley':'unknown',confirmed:false,confidence:run.confidence,equation:lineFromPoints(p1,p2)});
   }
-  return unique;
+  return lines;
 }
 
 export function inferRasterGrid(lines: CreaseLine[], size: number): number {
@@ -181,10 +104,6 @@ export function inferRasterGrid(lines: CreaseLine[], size: number): number {
     if (Math.abs(crease.p1.x - crease.p2.x) < 2 / size && Math.abs(crease.p1.y - crease.p2.y) > 10 / size) values.push((crease.p1.x + crease.p2.x) / 2);
     if (Math.abs(crease.p1.y - crease.p2.y) < 2 / size && Math.abs(crease.p1.x - crease.p2.x) > 10 / size) values.push((crease.p1.y + crease.p2.y) / 2);
   }
-  const unique = [...new Set(values.filter((value) => value > 0.01 && value < 0.99).map((value) => Math.round(value * size) / size))];
-  const ranked = [8, 12, 16, 20, 24, 32, 40, 48, 64, 96, 128].map((n) => ({
-    n,
-    score: unique.length ? unique.reduce((sum, value) => sum + Math.min(5, Math.abs(value - Math.round(value * n) / n) * size), 0) / unique.length + 0.015 * n : n,
-  }));
-  return ranked.sort((a, b) => a.score - b.score)[0].n;
+  const unique = [...new Set(values.filter(v=>v>.01&&v<.99).map(v=>Math.round(v*size)/size))];
+  return [8,12,16,20,24,32,40,48,64,96,128].map(n=>({n,score:unique.length?unique.reduce((s,v)=>s+Math.min(5,Math.abs(v-Math.round(v*n)/n)*size),0)/unique.length+.015*n:n})).sort((a,b)=>a.score-b.score)[0].n;
 }

@@ -17,3 +17,22 @@ export function referenceFinderCoordinates(p: Point2D) {
   // CP Lens origin: top left. ReferenceFinder: bottom left.
   return { x: p.x, y: 1-p.y };
 }
+
+/** Small arithmetic parser for reference coordinates; never executes JavaScript. */
+export function parseReferenceCoordinate(expression:string):number|null {
+ const text=expression.replace(/√2/g,'sqrt(2)').replace(/\s+/g,'');
+ if(text.length>120)return null;
+ const tokens=text.match(/sqrt|\d+(?:\.\d*)?|\.\d+|[()+*/-]/g)||[];
+ if(tokens.join('')!==text)return null;
+ let index=0;
+ const primary=():number=>{
+  const t=tokens[index++];
+  if(t==='+'||t==='-')return (t==='-'?-1:1)*primary();
+  if(t==='sqrt'){if(tokens[index++]!=='(')throw Error();const n=add();if(tokens[index++]!==')')throw Error();return Math.sqrt(n);}
+  if(t==='('){const n=add();if(tokens[index++]!==')')throw Error();return n;}
+  if(!t||!/^\d|^\./.test(t))throw Error();return Number(t);
+ };
+ const multiply=():number=>{let n=primary();while(tokens[index]==='*'||tokens[index]==='/'){const op=tokens[index++],r=primary();n=op==='*'?n*r:n/r;}return n;};
+ const add=():number=>{let n=multiply();while(tokens[index]==='+'||tokens[index]==='-'){const op=tokens[index++],r=multiply();n=op==='+'?n+r:n-r;}return n;};
+ try{const value=add();return index===tokens.length&&Number.isFinite(value)&&value>=0&&value<=1?value:null;}catch{return null;}
+}

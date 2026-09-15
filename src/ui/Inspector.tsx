@@ -1,5 +1,6 @@
+import { MountainValleyPanel } from './MountainValleyPanel';
 import { ReferenceFinderPanel } from './ReferenceFinderPanel';
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import {
   Layers,
   Grid as GridIcon,
@@ -62,6 +63,9 @@ export const Inspector: React.FC<InspectorProps> = ({ onRunAutoAnalysis }) => {
   // Focus coordinate for live inspector
   const targetCoord = selectedPoint ? { x: selectedPoint.x, y: selectedPoint.y } : cursorPaper;
 
+  const lastTarget = useRef({x:0.5,y:0.5});
+  if(targetCoord) lastTarget.current=targetCoord;
+
   const fracX = targetCoord
     ? approximateFraction(targetCoord.x, { maxDenominator: maxDenom, preferPowerOfTwo: true })
     : null;
@@ -111,7 +115,7 @@ export const Inspector: React.FC<InspectorProps> = ({ onRunAutoAnalysis }) => {
 
       {/* Main Panel Content */}
       <div className="flex-1 overflow-y-auto p-3 space-y-4">
-        {activeTab === 'selection' && targetCoord && <ReferenceFinderPanel point={targetCoord} />}
+        {activeTab === 'selection' && <ReferenceFinderPanel point={targetCoord || lastTarget.current} />}
         {/* TAB: SELECTION / DYNAMIC INSPECTOR */}
         {activeTab === 'selection' && (
           <>
@@ -220,16 +224,17 @@ export const Inspector: React.FC<InspectorProps> = ({ onRunAutoAnalysis }) => {
                   </button>
                 </div>
 
+                {selectedCrease.assignmentSource === 'inferred' && <p className="text-amber-700">Suggested by local fold constraints. Review before folding.</p>}
                 {/* Crease Type Switcher */}
                 <div>
                   <div className="text-[11px] font-medium text-neutral-400 uppercase tracking-wider mb-1.5">
                     Crease Type
                   </div>
                   <div className="grid grid-cols-2 gap-1 bg-neutral-100 p-1 rounded-lg">
-                    {(['mountain', 'valley', 'edge', 'auxiliary'] as CreaseType[]).map((t) => (
+                    {(['mountain', 'valley', 'unknown', 'edge', 'auxiliary'] as CreaseType[]).map((t) => (
                       <button
                         key={t}
-                        onClick={() => updateCrease(selectedCrease.id, { type: t })}
+                        onClick={() => updateCrease(selectedCrease.id, { type: t, confirmed: t !== 'unknown', assignmentSource: 'manual' })}
                         className={`py-1 rounded text-[11px] font-medium capitalize transition ${selectedCrease.type === t
                           ? 'bg-white text-neutral-900 shadow-sm font-semibold'
                           : 'text-neutral-500 hover:text-neutral-900'
@@ -330,6 +335,8 @@ export const Inspector: React.FC<InspectorProps> = ({ onRunAutoAnalysis }) => {
                 })()}
               </div>
             )}
+
+            <MountainValleyPanel />
 
             {/* CASE 4: NOTHING SELECTED (DOCUMENT & LIVE CURSOR INSPECTION) */}
             {!hasSelection && (

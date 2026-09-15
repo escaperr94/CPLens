@@ -14,7 +14,7 @@ CP Lens is a local-first React/TypeScript application for origami designers. It 
 - Accepts a drag-and-drop, pasted, or selected image.
 - Includes the bundled CP and Dove examples plus a **Schwarz lantern CP** test preset loaded from Wikimedia Commons (CC0).
 - Proposes the dense CP region and paper boundary.
-- Detects colored crease centerlines with a deterministic directional scanner, including short fragments and non-grid directions such as 22.5°.
+- Detects colored and monochrome crease centerlines from raster support, including 22.5° and arbitrary directions. Monochrome strokes remain unassigned.
 - Runs analysis in a Web Worker so pan, zoom, and selection stay responsive.
 - Displays vector lines over the raster source with Vector, Overlay, and Image views.
 - Infers a likely lattice and shows rational coordinate approximations with residuals.
@@ -103,3 +103,23 @@ Detected lines, grid coordinates, and reference points are proposals. The inspec
 ## License
 
 The CP Lens application code is released under the MIT License. The bundled ReferenceFinder engine is distributed under the GNU GPL; see [`public/vendor/reference-finder/LICENSE.txt`](public/vendor/reference-finder/LICENSE.txt) and the included source archive for its terms.
+
+
+## Monochrome CP and 22.5° references
+
+1. Import the original image (prefer a high-resolution source). Import automatically analyzes the **current** image and cancels the previous job.
+2. Compare **Image**, **Overlay**, and **Vector CP** before using the result. Cropping is axis-aligned; perspective photographs still need manual calibration. Raster recovery is approximate, especially at tiny, faint junctions.
+3. Black strokes appear gray as `unknown`, never randomly red or blue. Detected junctions split a long stroke into editable edges because M/V can change at an intersection.
+4. Select an edge and choose Mountain, Valley or Unknown. In **Mountain / valley assistant**, click **Propagate known folds**. The assistant checks interior vertices using Kawasaki, Maekawa and strict minimum-angle constraints. It assigns only signs shared by every remaining local candidate. Inconsistent inputs leave the project unchanged. **Clear inferred signs** removes proposals; manual signs remain. Undo restores the preceding state.
+5. Unseeded black geometry usually has multiple assignments, including the global M/V reversal. This assistant is not a complete global flat-folding solver. Incomplete junctions, non-flat vertices and unresolved signs are reported instead of guessed.
+6. For references, enter `sqrt(2)-1`, `(sqrt(2)-1)/2`, `3/8`, or decimal coordinates in the inspector. Click **Set target**, then **Find folding sequences**. The target stays fixed while you move the cursor. Coordinates use a top-left origin; conversion to the engine's bottom-left origin is automatic.
+7. Rank 4 is fast; rank 5 searches deeper with a 300,000-line/mark cap. Inspect the actual found coordinate and error in millimeters. Use the external ReferenceFinder for larger searches. Intermediate mark steps are paired with their fold diagrams; arrows show fold motion.
+
+Project JSON and SVG retain unassigned geometry. The legacy `.cp`/`.ori` exporter writes unassigned edges as auxiliary type 4; use project JSON when preserving unknown M/V semantics matters.
+
+### Validation of the September 15 repair
+
+- Regression tests cover arbitrary monochrome slopes, dense grids without false diagonals, raster gaps, 22.5° lines, arithmetic input, fold-step/diagram alignment, M/V ambiguity/conflicts and worker cancellation.
+- Browser checks used the supplied `1-2.jpg` (533 × 518): detected bounds `(11, 3)` to `(518, 507)`, only boundary/unassigned types, plus a ReferenceFinder target `(sqrt(2)-1, 0)` that returned a rank-2 solution with error below `1e-12` paper widths.
+- Raster centerlines are proposals, not exact mathematical reconstruction. Keep the original image available when reviewing faint details.
+- The reference implementation is bundled under `public/vendor/reference-finder/`, with its GPL license and corresponding source archive. See [Lang's ReferenceFinder](https://langorigami.com/article/referencefinder/) and [Hull's flat-fold survey](https://arxiv.org/abs/1307.1065) for the underlying methods and limits.

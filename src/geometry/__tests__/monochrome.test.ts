@@ -1,0 +1,7 @@
+import {it,expect} from 'vitest';
+import {extractRasterLines} from '../../cv/rasterLines';
+const size=257;
+function scan(segments:number[][]){const data=new Uint8ClampedArray(size*size*4).fill(255);for(const [x1,y1,x2,y2]of segments){const n=Math.ceil(Math.hypot(x2-x1,y2-y1)*5);for(let i=0;i<=n;i++){const x=Math.round(x1+(x2-x1)*i/n),y=Math.round(y1+(y2-y1)*i/n),k=(y*size+x)*4;data[k]=data[k+1]=data[k+2]=80;}}return extractRasterLines(data,size,size,{x0:0,y0:0,width:256,height:256});}
+it('detects black arbitrary slopes without assigning mountain or valley',()=>{const lines=scan([[20,30,220,96.6667],[30,150,230,150]]);expect(lines.every(c=>c.type==='unknown')).toBe(true);const diagonal=lines.find(c=>Math.abs(c.p2.y-c.p1.y)>.2);expect(diagonal).toBeDefined();expect(Math.abs((diagonal!.p2.y-diagonal!.p1.y)/(diagonal!.p2.x-diagonal!.p1.x)-1/3)).toBeLessThan(.01);});
+it('does not bridge empty space in a monochrome line',()=>{const lines=scan([[20,80,100,80],[108,80,230,80]]);expect(lines.some(c=>Math.min(c.p1.x,c.p2.x)<100/256&&Math.max(c.p1.x,c.p2.x)>108/256)).toBe(false);});
+it('does not create diagonals through a dense orthogonal grid',()=>{const segments=[];for(let x=20;x<=230;x+=10)segments.push([x,20,x,230],[20,x,230,x]);const lines=scan(segments);const spurs=lines.filter(c=>Math.abs(c.p2.x-c.p1.x)>.01&&Math.abs(c.p2.y-c.p1.y)>.01);expect(spurs).toHaveLength(0);expect(lines.length).toBeGreaterThan(35);});
