@@ -204,3 +204,32 @@ export function getFractionCandidates(
   return candidates.sort((a, b) => a.error - b.error);
 }
 
+/**
+ * Formats a coordinate fraction respecting the grid division if close to a grid line.
+ * E.g. with grid 32, 0.625 -> "20/32" (does not reduce to "5/8").
+ */
+export function formatGridFraction(
+  value: number,
+  gridDivisions: number = 32
+): string {
+  if (isNaN(value) || !isFinite(value)) return '0';
+
+  const div = Math.max(1, Math.round(gridDivisions || 32));
+  const gridIndex = Math.round(value * div);
+  const gridExpected = gridIndex / div;
+
+  // If close to a grid line (tolerance ~10% of a grid cell or min 0.004)
+  const tol = Math.min(0.005, 0.2 / div);
+  if (Math.abs(value - gridExpected) <= tol) {
+    return `${gridIndex}/${div}`;
+  }
+
+  // If not on a grid line, approximate with standard fractions
+  const approx = approximateFraction(value, { maxDenominator: Math.max(64, div * 2) });
+  if (approx.error < 0.005) {
+    return approx.formatted;
+  }
+
+  return value.toFixed(3);
+}
+

@@ -1,7 +1,8 @@
 import React, { useRef, useEffect } from 'react';
 import { Point2D } from '../geometry/point';
-import { approximateFraction } from '../geometry/rational';
+import { formatGridFraction } from '../geometry/rational';
 import { SnapCandidate } from '../geometry/snapping';
+import { useAppStore } from '../store/projectStore';
 
 interface LoupeProps {
   cursorScreen: Point2D | null;
@@ -73,8 +74,12 @@ export const Loupe: React.FC<LoupeProps> = ({
   const posX = cursorScreen.x + 20;
   const posY = cursorScreen.y - size - 20;
 
-  const fracX = cursorPaper ? approximateFraction(cursorPaper.x, { maxDenominator: 64 }) : null;
-  const fracY = cursorPaper ? approximateFraction(cursorPaper.y, { maxDenominator: 64 }) : null;
+  const grid = useAppStore((s) => s.grid);
+  const divX = grid?.divisionsX || 32;
+  const divY = grid?.divisionsY || 32;
+  const targetPt = snap ? snap.point : cursorPaper;
+  const fracXStr = targetPt ? formatGridFraction(targetPt.x, divX) : null;
+  const fracYStr = targetPt ? formatGridFraction(targetPt.y, divY) : null;
 
   return (
     <div
@@ -89,7 +94,7 @@ export const Loupe: React.FC<LoupeProps> = ({
       <canvas ref={canvasRef} width={size} height={size} className="w-full h-full" />
       <div className="absolute bottom-2 left-0 right-0 text-center">
         <span className="rounded-full bg-white/95 px-2 py-0.5 font-mono text-[10px] text-neutral-800 border border-neutral-200 shadow-sm font-semibold">
-          {zoom}× {fracX && fracY ? `(${fracX.formatted}, ${fracY.formatted})` : ''}
+          {zoom}× {fracXStr && fracYStr ? `(${fracXStr}, ${fracYStr})` : ''}
         </span>
       </div>
     </div>

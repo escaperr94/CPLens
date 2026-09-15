@@ -638,7 +638,7 @@ export const CPStage: React.FC = () => {
           />
 
           {/* Layer 10: Snap indicator */}
-          <SnapOverlay snap={snapCandidate} zoom={camera.zoom} />
+          <SnapOverlay snap={snapCandidate} zoom={camera.zoom} gridConfig={grid} />
         </Layer>
       </Stage>
 

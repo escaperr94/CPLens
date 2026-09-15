@@ -448,9 +448,14 @@ export async function analyzePixels(
   onProgress?.('Detecting colored / monochrome centerlines...', 60);
   await new Promise((r) => setTimeout(r, 60));
 
-  // True base grid for origami CP is 32x32
-  const creases = splitCreaseJunctions(extractRasterLines(data, width, height, region), 1.5 / Math.max(region.width, region.height));
-  const N = inferRasterGrid(creases, Math.max(region.width, region.height));
+  const size = Math.max(region.width, region.height);
+  const rawLines = extractRasterLines(data, width, height, region);
+  const N = inferRasterGrid(rawLines, size);
+  const creases = splitCreaseJunctions(rawLines, {
+    tolerance: 6.5 / size,
+    gridN: N,
+    size,
+  });
 
   onProgress?.('Detecting and vectorizing crease lines...', 75);
   await new Promise((r) => setTimeout(r, 80));

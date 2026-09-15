@@ -28,6 +28,13 @@ export function extractRasterLines(data: Uint8ClampedArray, width: number, heigh
     const px=Math.round(x+region.x0),py=Math.round(y+region.y0);
     return px>=0&&px<width&&py>=0&&py<height&&mask[py*width+px]===type;
   };
+  const hasInk=(x:number,y:number)=>{
+    const px=Math.round(x+region.x0),py=Math.round(y+region.y0);
+    if(px<0||px>=width||py<0||py>=height)return false;
+    if(mask[py*width+px]!==0)return true;
+    const k=(py*width+px)*4;
+    return(data[k]+data[k+1]+data[k+2])<680;
+  };
   // 1-degree proposals plus exact common origami slopes. Accepted runs are
   // fitted to their own ink, so arbitrary angles do not become 22.5° stairs.
   const angles=[...Array.from({length:180},(_,i)=>i*Math.PI/180),...Array.from({length:8},(_,i)=>i*Math.PI/8),...[-3,-2,-.5,-1/3,1/3,.5,2,3].map(s=>(Math.atan(s)+Math.PI)%Math.PI)];
@@ -38,7 +45,7 @@ export function extractRasterLines(data: Uint8ClampedArray, width: number, heigh
     for(let peak=1;peak<votes.length-1;peak++){
       if(votes[peak]<minLength*.8||votes[peak]<votes[peak-1]||votes[peak]<=votes[peak+1])continue;
       const rho=((peak-1-radius)*votes[peak-1]+(peak-radius)*votes[peak]+(peak+1-radius)*votes[peak+1])/(votes[peak-1]+votes[peak]+votes[peak+1]);
-      let start=NaN,last=NaN,hits=0,ink=0;
+      let start=NaN,last=NaN,hits=0,ink=0,blankGap=0;
       const flush=()=>{
         const length=last-start,confidence=hits/(length+1);
         if(!Number.isFinite(start)||length<minLength||confidence<.88)return;
@@ -54,11 +61,19 @@ export function extractRasterLines(data: Uint8ClampedArray, width: number, heigh
         const x=nx*rho+ux*t,y=ny*rho+uy*t;
         const off=type===3?.35:.65;
         const hit=at(x,y,type)||at(x+nx*off,y+ny*off,type)||at(x-nx*off,y-ny*off,type);
-        if(hit){if(!Number.isFinite(start))start=t;last=t;hits++;
+        if(hit){if(!Number.isFinite(start))start=t;last=t;hits++;blankGap=0;
           const px=Math.round(region.x0+x),py=Math.round(region.y0+y),k=(py*width+px)*4;
           ink+=Math.max(0,1-(data[k]+data[k+1]+data[k+2])/765);
         }
-        else if(Number.isFinite(start)&&t-last>(type===3?2:8)){flush();start=NaN;hits=0;ink=0;}
+        else if(Number.isFinite(start)){
+          const crossing = type!==3 && (hasInk(x,y)||hasInk(x+nx*off,y+ny*off)||hasInk(x-nx*off,y-ny*off));
+          if(crossing){
+            if(t-last>14){flush();start=NaN;hits=0;ink=0;blankGap=0;}
+          }else{
+            blankGap++;
+            if(blankGap>(type===3?2:8)||t-last>14){flush();start=NaN;hits=0;ink=0;blankGap=0;}
+          }
+        }
       }
       flush();
     }

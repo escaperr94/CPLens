@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { approximateFraction, approximatePowerOfTwo, getFractionCandidates } from '../rational';
+import { approximateFraction, approximatePowerOfTwo, getFractionCandidates, formatGridFraction } from '../rational';
 import { createUnitSquareHomography, applyHomography } from '../homography';
 import { segmentIntersection, findCreaseIntersections } from '../intersection';
 import { paperToGridCoords, gridToPaperCoords, DEFAULT_GRID_CONFIG } from '../grid';
@@ -38,6 +38,22 @@ describe('Rational Approximation Engine', () => {
     const candidates = getFractionCandidates(val, 64);
     expect(candidates.length).toBeGreaterThan(0);
     expect(candidates[0].formatted).toBe('17/64');
+  });
+
+  it('formats grid coordinates with exact denominator without reducing', () => {
+    // 20/32 = 0.625, should be '20/32' and not '5/8'
+    expect(formatGridFraction(20 / 32, 32)).toBe('20/32');
+    expect(formatGridFraction(17 / 32, 32)).toBe('17/32');
+    expect(formatGridFraction(16 / 32, 32)).toBe('16/32');
+    expect(formatGridFraction(8 / 32, 32)).toBe('8/32');
+    expect(formatGridFraction(0, 32)).toBe('0/32');
+    expect(formatGridFraction(1, 32)).toBe('32/32');
+
+    // On grid 64: 20/32 = 40/64
+    expect(formatGridFraction(20 / 32, 64)).toBe('40/64');
+
+    // Non-grid coordinate falls back to reduced fraction
+    expect(formatGridFraction(1 / 3, 32)).toBe('1/3');
   });
 });
 

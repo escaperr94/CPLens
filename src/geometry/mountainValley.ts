@@ -3,27 +3,171 @@ import { lineFromPoints } from './line';
 import { Point2D, distance } from './point';
 
 /** Split at true junctions; an M/V assignment belongs to an edge between vertices. */
-export function splitCreaseJunctions(input:CreaseLine[], tolerance=1e-5):CreaseLine[]{
-  const cuts=input.map(c=>[{t:0,p:c.p1},{t:1,p:c.p2}]);
-  for(let i=0;i<input.length;i++)for(let j=i+1;j<input.length;j++){
-    const a=input[i],b=input[j],ax=a.p2.x-a.p1.x,ay=a.p2.y-a.p1.y,bx=b.p2.x-b.p1.x,by=b.p2.y-b.p1.y;
-    const cross=ax*by-ay*bx,al=Math.hypot(ax,ay),bl=Math.hypot(bx,by);
-    if(al<1e-8||bl<1e-8||Math.abs(cross)/(al*bl)<.08)continue;
-    const dx=b.p1.x-a.p1.x,dy=b.p1.y-a.p1.y,t=(dx*by-dy*bx)/cross,u=(dx*ay-dy*ax)/cross;
-    if(t < -tolerance/al||t>1+tolerance/al||u < -tolerance/bl||u>1+tolerance/bl)continue;
-    const p={x:a.p1.x+t*ax,y:a.p1.y+t*ay};
-    if(p.x<0||p.x>1||p.y<0||p.y>1)continue;
-    cuts[i].push({t,p});cuts[j].push({t:u,p});
+export interface SplitCreaseOptions {
+  tolerance?: number;
+  gridN?: number;
+  size?: number;
+}
+
+/** Split at true junctions; an M/V assignment belongs to an edge between vertices. */
+export function splitCreaseJunctions(
+  input: CreaseLine[],
+  toleranceOrOptions: number | SplitCreaseOptions = 1e-5
+): CreaseLine[] {
+  const options: SplitCreaseOptions =
+    typeof toleranceOrOptions === 'number'
+      ? { tolerance: toleranceOrOptions }
+      : (toleranceOrOptions ?? {});
+
+  const tolerance = options.tolerance ?? 1e-5;
+  const gridN = options.gridN;
+  const size = options.size;
+
+  // Extension tolerance: how far past endpoints can we extend to reach an intersection?
+  const extTol = Math.max(tolerance, size ? 6.5 / size : tolerance);
+
+  // 1. Find all pairwise intersections with extension tolerance
+  interface RawJunction {
+    p: Point2D;
+    lines: [number, number];
   }
-  return input.flatMap((c,i)=>{
-    const length=distance(c.p1,c.p2);if(length<1e-8)return [];
-    const ordered=cuts[i].sort((a,b)=>a.t-b.t),distinct:typeof ordered=[];
-    for(const cut of ordered){const last=distinct[distinct.length-1];if(last&&Math.abs(cut.t-last.t)*length<=tolerance){
-      // Prefer the intersection over an isolated raster endpoint.
-      if(cut.t!==0&&cut.t!==1)distinct[distinct.length-1]=cut;
-    }else distinct.push(cut);}
-    return distinct.slice(1).map((end,k)=>({...c,id:distinct.length===2?c.id:`${c.id}_s${k}`,p1:distinct[k].p,p2:end.p,equation:lineFromPoints(distinct[k].p,end.p)}));
-  });
+  const rawJunctions: RawJunction[] = [];
+
+  for (let i = 0; i < input.length; i++) {
+    for (let j = i + 1; j < input.length; j++) {
+      const a = input[i], b = input[j];
+      const ax = a.p2.x - a.p1.x, ay = a.p2.y - a.p1.y;
+      const bx = b.p2.x - b.p1.x, by = b.p2.y - b.p1.y;
+      const cross = ax * by - ay * bx;
+      const al = Math.hypot(ax, ay), bl = Math.hypot(bx, by);
+      if (al < 1e-8 || bl < 1e-8 || Math.abs(cross) / (al * bl) < 0.08) continue;
+
+      const dx = b.p1.x - a.p1.x, dy = b.p1.y - a.p1.y;
+      const t = (dx * by - dy * bx) / cross;
+      const u = (dx * ay - dy * ax) / cross;
+
+      if (t < -extTol / al || t > 1 + extTol / al || u < -extTol / bl || u > 1 + extTol / bl) continue;
+
+      const px = a.p1.x + t * ax;
+      const py = a.p1.y + t * ay;
+      if (px < -0.01 || px > 1.01 || py < -0.01 || py > 1.01) continue;
+
+      rawJunctions.push({ p: { x: px, y: py }, lines: [i, j] });
+    }
+  }
+
+  // 2. Cluster raw junctions that are close to each other
+  const clusterDist = Math.max(tolerance, size ? 3.5 / size : 1e-4);
+  interface VertexCluster {
+    x: number;
+    y: number;
+    count: number;
+    lineIndices: Set<number>;
+  }
+  const clusters: VertexCluster[] = [];
+  for (const rj of rawJunctions) {
+    let found = false;
+    for (const c of clusters) {
+      if (Math.hypot(rj.p.x - c.x, rj.p.y - c.y) <= clusterDist) {
+        c.x = (c.x * c.count + rj.p.x) / (c.count + 1);
+        c.y = (c.y * c.count + rj.p.y) / (c.count + 1);
+        c.count++;
+        rj.lines.forEach(l => c.lineIndices.add(l));
+        found = true;
+        break;
+      }
+    }
+    if (!found) {
+      clusters.push({
+        x: rj.p.x,
+        y: rj.p.y,
+        count: 1,
+        lineIndices: new Set(rj.lines),
+      });
+    }
+  }
+
+  // 3. Grid snap cluster vertices if within threshold of gridN
+  if (gridN && gridN >= 8 && size) {
+    for (const c of clusters) {
+      const gx = Math.round(c.x * gridN) / gridN;
+      const gy = Math.round(c.y * gridN) / gridN;
+      if (Math.hypot(c.x - gx, c.y - gy) * size <= 2.5) {
+        c.x = gx;
+        c.y = gy;
+      }
+    }
+  }
+
+  // 4. Project cluster vertices onto incident lines to create cuts
+  const cutsPerLine: { t: number; p: Point2D }[][] = input.map(c => [
+    { t: 0, p: c.p1 },
+    { t: 1, p: c.p2 },
+  ]);
+
+  for (const c of clusters) {
+    const v = { x: c.x, y: c.y };
+    for (const lineIdx of c.lineIndices) {
+      const line = input[lineIdx];
+      const ax = line.p2.x - line.p1.x, ay = line.p2.y - line.p1.y;
+      const al2 = ax * ax + ay * ay;
+      if (al2 < 1e-12) continue;
+      const t = ((v.x - line.p1.x) * ax + (v.y - line.p1.y) * ay) / al2;
+      const distToLine = Math.hypot(line.p1.x + t * ax - v.x, line.p1.y + t * ay - v.y);
+      const maxDistToLine = size ? 3.5 / size : Math.max(tolerance, 1e-4);
+      const al = Math.sqrt(al2);
+      if (distToLine <= maxDistToLine && t >= -extTol / al && t <= 1 + extTol / al) {
+        cutsPerLine[lineIdx].push({ t, p: v });
+      }
+    }
+  }
+
+  // 5. Generate split creases
+  const minSegLen = size ? 3.0 / size : tolerance;
+  const result: CreaseLine[] = [];
+
+  for (let i = 0; i < input.length; i++) {
+    const c = input[i];
+    const al = Math.hypot(c.p2.x - c.p1.x, c.p2.y - c.p1.y);
+    if (al < 1e-8) continue;
+
+    const cuts = cutsPerLine[i].sort((a, b) => a.t - b.t);
+    const minT = cuts[0].t;
+    const maxT = cuts[cuts.length - 1].t;
+    const filteredCuts = cuts.filter(cut => {
+      if (cut.t === 0 && minT < -1e-5) return false;
+      if (cut.t === 1 && maxT > 1 + 1e-5) return false;
+      return true;
+    });
+
+    const distinct: typeof cuts = [];
+    const mergeDist = size ? 3.5 / size : Math.max(tolerance, 1e-5);
+    for (const cut of filteredCuts) {
+      const last = distinct[distinct.length - 1];
+      if (last && Math.abs(cut.t - last.t) * al <= mergeDist) {
+        if (cut.t !== 0 && cut.t !== 1) {
+          distinct[distinct.length - 1] = cut;
+        }
+      } else {
+        distinct.push(cut);
+      }
+    }
+
+    distinct.slice(1).forEach((endCut, k) => {
+      const startCut = distinct[k];
+      if (Math.hypot(endCut.p.x - startCut.p.x, endCut.p.y - startCut.p.y) >= minSegLen) {
+        result.push({
+          ...c,
+          id: distinct.length === 2 ? c.id : `${c.id}_s${k}`,
+          p1: startCut.p,
+          p2: endCut.p,
+          equation: lineFromPoints(startCut.p, endCut.p),
+        });
+      }
+    });
+  }
+
+  return result;
 }
 
 export type MVResult={creases:CreaseLine[];inferred:number;unresolved:number;conflicts:number;invalidVertices:number;checkedVertices:number};
