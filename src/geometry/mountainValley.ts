@@ -118,7 +118,12 @@ export function splitCreaseJunctions(
       const maxDistToLine = size ? 3.5 / size : Math.max(tolerance, 1e-4);
       const al = Math.sqrt(al2);
       if (distToLine <= maxDistToLine && t >= -extTol / al && t <= 1 + extTol / al) {
-        cutsPerLine[lineIdx].push({ t, p: v });
+        const clampedT = Math.max(0, Math.min(1, t));
+        const projPt = {
+          x: line.p1.x + clampedT * ax,
+          y: line.p1.y + clampedT * ay,
+        };
+        cutsPerLine[lineIdx].push({ t: clampedT, p: projPt });
       }
     }
   }
@@ -167,8 +172,237 @@ export function splitCreaseJunctions(
       }
     });
   }
+  return weldCreaseJunctions(result, options);
+}
 
-  return result;
+/**
+ * Unifies endpoints and junctions of crease lines so every meeting stroke shares
+ * the exact same vertex point with zero gaps.
+ */
+export function weldCreaseJunctions(
+  input: CreaseLine[],
+  options: SplitCreaseOptions = {}
+): CreaseLine[] {
+  if (input.length <= 1) return input;
+  const size = options.size;
+  const gridN = options.gridN;
+  const tolerance = options.tolerance ?? (size ? 3.5 / size : 0.005);
+  const weldRadius = Math.max(1e-4, size ? 4.5 / size : tolerance);
+  const boundaryDist = Math.max(1e-4, size ? 6.0 / size : 0.006);
+
+  // 1. Boundary snapping for endpoints near borders
+  let lines: CreaseLine[] = input.map((c) => {
+    const p1 = { ...c.p1 };
+    const p2 = { ...c.p2 };
+
+    if (p1.x <= boundaryDist) p1.x = 0;
+    else if (p1.x >= 1 - boundaryDist) p1.x = 1;
+    if (p1.y <= boundaryDist) p1.y = 0;
+    else if (p1.y >= 1 - boundaryDist) p1.y = 1;
+
+    if (p2.x <= boundaryDist) p2.x = 0;
+    else if (p2.x >= 1 - boundaryDist) p2.x = 1;
+    if (p2.y <= boundaryDist) p2.y = 0;
+    else if (p2.y >= 1 - boundaryDist) p2.y = 1;
+
+    return { ...c, p1, p2, equation: lineFromPoints(p1, p2) };
+  });
+
+  // 2. T-junction projection: project endpoints that terminate close to another line onto it
+  const snapToLineDist = Math.max(1e-4, size ? 4.5 / size : tolerance);
+  const tJunctions: { lineIdx: number; t: number; pt: Point2D }[] = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    for (const endpoint of [lines[i].p1, lines[i].p2]) {
+      for (let j = 0; j < lines.length; j++) {
+        if (i === j) continue;
+        const target = lines[j];
+        const tx = target.p2.x - target.p1.x;
+        const ty = target.p2.y - target.p1.y;
+        const len2 = tx * tx + ty * ty;
+        if (len2 < 1e-8) continue;
+
+        const t = ((endpoint.x - target.p1.x) * tx + (endpoint.y - target.p1.y) * ty) / len2;
+        if (t > 0.01 && t < 0.99) {
+          const projX = target.p1.x + t * tx;
+          const projY = target.p1.y + t * ty;
+          const d = Math.hypot(endpoint.x - projX, endpoint.y - projY);
+          if (d <= snapToLineDist && d > 1e-7) {
+            endpoint.x = projX;
+            endpoint.y = projY;
+            tJunctions.push({ lineIdx: j, t, pt: { x: projX, y: projY } });
+          }
+        }
+      }
+    }
+  }
+
+  if (tJunctions.length > 0) {
+    const splitsByLine = new Map<number, { t: number; pt: Point2D }[]>();
+    for (const tj of tJunctions) {
+      if (!splitsByLine.has(tj.lineIdx)) splitsByLine.set(tj.lineIdx, []);
+      splitsByLine.get(tj.lineIdx)!.push({ t: tj.t, pt: tj.pt });
+    }
+
+    const nextLines: CreaseLine[] = [];
+    for (let i = 0; i < lines.length; i++) {
+      const splits = splitsByLine.get(i);
+      if (!splits || splits.length === 0) {
+        nextLines.push(lines[i]);
+        continue;
+      }
+      splits.sort((a, b) => a.t - b.t);
+      const pts = [lines[i].p1];
+      for (const sp of splits) {
+        const last = pts[pts.length - 1];
+        if (Math.hypot(sp.pt.x - last.x, sp.pt.y - last.y) > 0.003) {
+          pts.push(sp.pt);
+        }
+      }
+      pts.push(lines[i].p2);
+
+      for (let k = 0; k < pts.length - 1; k++) {
+        if (Math.hypot(pts[k + 1].x - pts[k].x, pts[k + 1].y - pts[k].y) > 0.002) {
+          nextLines.push({
+            ...lines[i],
+            id: k === 0 && pts.length === 2 ? lines[i].id : `${lines[i].id}_tj${k}`,
+            p1: pts[k],
+            p2: pts[k + 1],
+            equation: lineFromPoints(pts[k], pts[k + 1]),
+          });
+        }
+      }
+    }
+    lines = nextLines;
+  }
+
+  // 3. Endpoint clustering & welding
+  interface EndpointRef {
+    pt: Point2D;
+    lineIdx: number;
+    which: 'p1' | 'p2';
+  }
+  const allEndpoints: EndpointRef[] = [];
+  lines.forEach((l, idx) => {
+    allEndpoints.push({ pt: l.p1, lineIdx: idx, which: 'p1' });
+    allEndpoints.push({ pt: l.p2, lineIdx: idx, which: 'p2' });
+  });
+
+  interface VertexCluster {
+    x: number;
+    y: number;
+    count: number;
+    refs: EndpointRef[];
+  }
+  const clusters: VertexCluster[] = [];
+
+  for (const ep of allEndpoints) {
+    let bestCluster: VertexCluster | null = null;
+    let minDist = weldRadius;
+
+    for (const cl of clusters) {
+      const d = Math.hypot(ep.pt.x - cl.x, ep.pt.y - cl.y);
+      if (d <= minDist) {
+        minDist = d;
+        bestCluster = cl;
+      }
+    }
+
+    if (bestCluster) {
+      bestCluster.x = (bestCluster.x * bestCluster.count + ep.pt.x) / (bestCluster.count + 1);
+      bestCluster.y = (bestCluster.y * bestCluster.count + ep.pt.y) / (bestCluster.count + 1);
+      bestCluster.count++;
+      bestCluster.refs.push(ep);
+    } else {
+      clusters.push({
+        x: ep.pt.x,
+        y: ep.pt.y,
+        count: 1,
+        refs: [ep],
+      });
+    }
+  }
+
+  // Snap clusters to gridN if present
+  if (gridN && gridN >= 8 && size) {
+    const maxGridSnap = Math.min(0.4 / gridN, 2.5 / size);
+    for (const cl of clusters) {
+      const gx = Math.round(cl.x * gridN) / gridN;
+      const gy = Math.round(cl.y * gridN) / gridN;
+      if (Math.hypot(cl.x - gx, cl.y - gy) <= maxGridSnap) {
+        cl.x = gx;
+        cl.y = gy;
+      }
+    }
+  }
+
+  // Boundary snap clusters
+  for (const cl of clusters) {
+    if (cl.x <= boundaryDist) cl.x = 0;
+    else if (cl.x >= 1 - boundaryDist) cl.x = 1;
+    if (cl.y <= boundaryDist) cl.y = 0;
+    else if (cl.y >= 1 - boundaryDist) cl.y = 1;
+  }
+
+  // 4. Reassign welded vertices back to all incident line endpoints
+  for (const cl of clusters) {
+    const unifiedPoint: Point2D = {
+      x: Number(cl.x.toFixed(6)),
+      y: Number(cl.y.toFixed(6)),
+    };
+    for (const r of cl.refs) {
+      const line = lines[r.lineIdx];
+      const lx = line.p2.x - line.p1.x;
+      const ly = line.p2.y - line.p1.y;
+      const len2 = lx * lx + ly * ly;
+      let targetPt = unifiedPoint;
+      if (len2 > 1e-8) {
+        const isH = Math.abs(ly) < 1e-4;
+        const isV = Math.abs(lx) < 1e-4;
+        const isD1 = Math.abs(ly - lx) < 1e-4;
+        const isD2 = Math.abs(ly + lx) < 1e-4;
+        if (isH) {
+          targetPt = { x: unifiedPoint.x, y: line.p1.y };
+        } else if (isV) {
+          targetPt = { x: line.p1.x, y: unifiedPoint.y };
+        } else if (isD1) {
+          const d = line.p1.y - line.p1.x;
+          targetPt = { x: (unifiedPoint.x + unifiedPoint.y - d) / 2, y: (unifiedPoint.x + unifiedPoint.y + d) / 2 };
+        } else if (isD2) {
+          const s = line.p1.y + line.p1.x;
+          targetPt = { x: (unifiedPoint.x - unifiedPoint.y + s) / 2, y: (unifiedPoint.y - unifiedPoint.x + s) / 2 };
+        }
+      }
+      if (r.which === 'p1') {
+        lines[r.lineIdx].p1 = targetPt;
+      } else {
+        lines[r.lineIdx].p2 = targetPt;
+      }
+    }
+  }
+
+  // 5. Remove degenerate zero-length segments and duplicate parallel segments
+  const validLines: CreaseLine[] = [];
+  const seen = new Set<string>();
+
+  for (const l of lines) {
+    const d = Math.hypot(l.p2.x - l.p1.x, l.p2.y - l.p1.y);
+    if (d < 0.002) continue; // skip degenerate stubs < 2px
+
+    const k1 = `${l.p1.x.toFixed(4)},${l.p1.y.toFixed(4)}`;
+    const k2 = `${l.p2.x.toFixed(4)},${l.p2.y.toFixed(4)}`;
+    const key = k1 < k2 ? `${l.type}_${k1}->${k2}` : `${l.type}_${k2}->${k1}`;
+
+    if (!seen.has(key)) {
+      seen.add(key);
+      validLines.push({
+        ...l,
+        equation: lineFromPoints(l.p1, l.p2),
+      });
+    }
+  }
+
+  return validLines;
 }
 
 export type MVResult={creases:CreaseLine[];inferred:number;unresolved:number;conflicts:number;invalidVertices:number;checkedVertices:number};

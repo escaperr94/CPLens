@@ -252,6 +252,51 @@ export function snapCreasesToOrigamiGrid(lines: CreaseLine[], N: number, size: n
       }
     }
 
+    // 5. Check if rational 1:2 or 2:1 slope (angles ~26.565°, 63.435°, 116.565°, 153.435°)
+    const rationalSlopes: [number, number, number][] = [
+      [26.565, 0.5, 10],
+      [153.435, -0.5, 10],
+      [63.435, 2.0, 10],
+      [116.565, -2.0, 10],
+    ];
+    let snappedSlope = false;
+    for (const [targetAngle, m, tolDeg] of rationalSlopes) {
+      if (Math.abs(angle - targetAngle) <= tolDeg) {
+        const midX = (c.p1.x + c.p2.x) / 2;
+        const midY = (c.p1.y + c.p2.y) / 2;
+        const intercept = midY - m * midX;
+        let k: number;
+        let gridIntercept: number;
+        if (Math.abs(m) === 0.5) {
+          k = Math.round(2 * intercept * N);
+          gridIntercept = k / (2 * N);
+        } else {
+          k = Math.round(intercept * N);
+          gridIntercept = k / N;
+        }
+        const distPx = (Math.abs(midY - (m * midX + gridIntercept)) / Math.sqrt(1 + m * m)) * size;
+        if (distPx <= maxTolPx * 1.25) {
+          const minX = Math.min(c.p1.x, c.p2.x);
+          const maxX = Math.max(c.p1.x, c.p2.x);
+          const gX1 = Math.max(0, Math.min(1, Math.round(minX * N) / N));
+          const gX2 = Math.max(0, Math.min(1, Math.round(maxX * N) / N));
+          const gY1 = Math.max(0, Math.min(1, m * gX1 + gridIntercept));
+          const gY2 = Math.max(0, Math.min(1, m * gX2 + gridIntercept));
+          if (Math.hypot(gX2 - gX1, gY2 - gY1) * size >= 4.0) {
+            snapped.push({
+              ...c,
+              p1: { x: gX1, y: gY1 },
+              p2: { x: gX2, y: gY2 },
+              equation: lineFromPoints({ x: gX1, y: gY1 }, { x: gX2, y: gY2 }),
+            });
+            snappedSlope = true;
+            break;
+          }
+        }
+      }
+    }
+    if (snappedSlope) continue;
+
     // Retain off-grid lines or 22.5 deg lines if they are sufficiently long (> 20px)
     if (len * size >= 20.0) {
       snapped.push(c);

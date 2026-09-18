@@ -11,6 +11,8 @@ export interface GridConfig {
   rotation: number; // degrees
   opacity: number;
   color: string;
+  diagonal22_5?: boolean;
+  diagonalAngles?: 'none' | '45' | '22.5';
 }
 
 export const DEFAULT_GRID_CONFIG: GridConfig = {
@@ -24,6 +26,8 @@ export const DEFAULT_GRID_CONFIG: GridConfig = {
   rotation: 0,
   opacity: 0.45,
   color: '#3b82f6',
+  diagonal22_5: false,
+  diagonalAngles: 'none',
 };
 
 export const ORIGAMI_GRID_PRESETS = [8, 12, 16, 20, 24, 28, 32, 36, 40, 48, 56, 64, 72, 80, 96, 112, 120, 128] as const;

@@ -8,13 +8,19 @@ interface CreaseLayerProps {
   selectedId: string | null;
   zoom: number;
   onSelectCrease: (id: string) => void;
+  paperWidth?: number;
+  paperHeight?: number;
 }
 
 export const CreaseLayer: React.FC<CreaseLayerProps> = React.memo(({
   creases,
   selectedId,
   zoom,
+  paperWidth,
+  paperHeight,
 }) => {
+  const pW = paperWidth || BASE_PAPER_SIZE;
+  const pH = paperHeight || BASE_PAPER_SIZE;
   const strokeW = 2 / zoom;
   const selectedStrokeW = 4 / zoom;
 
@@ -62,8 +68,8 @@ export const CreaseLayer: React.FC<CreaseLayerProps> = React.memo(({
             context.beginPath();
             for (let i = 0; i < mountains.length; i++) {
               const c = mountains[i];
-              context.moveTo(c.p1.x * BASE_PAPER_SIZE, c.p1.y * BASE_PAPER_SIZE);
-              context.lineTo(c.p2.x * BASE_PAPER_SIZE, c.p2.y * BASE_PAPER_SIZE);
+              context.moveTo(c.p1.x * pW, c.p1.y * pH);
+              context.lineTo(c.p2.x * pW, c.p2.y * pH);
             }
             context.fillStrokeShape(shape);
           }}
@@ -82,8 +88,8 @@ export const CreaseLayer: React.FC<CreaseLayerProps> = React.memo(({
             context.beginPath();
             for (let i = 0; i < valleys.length; i++) {
               const c = valleys[i];
-              context.moveTo(c.p1.x * BASE_PAPER_SIZE, c.p1.y * BASE_PAPER_SIZE);
-              context.lineTo(c.p2.x * BASE_PAPER_SIZE, c.p2.y * BASE_PAPER_SIZE);
+              context.moveTo(c.p1.x * pW, c.p1.y * pH);
+              context.lineTo(c.p2.x * pW, c.p2.y * pH);
             }
             context.fillStrokeShape(shape);
           }}
@@ -102,8 +108,8 @@ export const CreaseLayer: React.FC<CreaseLayerProps> = React.memo(({
             context.beginPath();
             for (let i = 0; i < edges.length; i++) {
               const c = edges[i];
-              context.moveTo(c.p1.x * BASE_PAPER_SIZE, c.p1.y * BASE_PAPER_SIZE);
-              context.lineTo(c.p2.x * BASE_PAPER_SIZE, c.p2.y * BASE_PAPER_SIZE);
+              context.moveTo(c.p1.x * pW, c.p1.y * pH);
+              context.lineTo(c.p2.x * pW, c.p2.y * pH);
             }
             context.fillStrokeShape(shape);
           }}
@@ -122,8 +128,8 @@ export const CreaseLayer: React.FC<CreaseLayerProps> = React.memo(({
             context.beginPath();
             for (let i = 0; i < auxiliaries.length; i++) {
               const c = auxiliaries[i];
-              context.moveTo(c.p1.x * BASE_PAPER_SIZE, c.p1.y * BASE_PAPER_SIZE);
-              context.lineTo(c.p2.x * BASE_PAPER_SIZE, c.p2.y * BASE_PAPER_SIZE);
+              context.moveTo(c.p1.x * pW, c.p1.y * pH);
+              context.lineTo(c.p2.x * pW, c.p2.y * pH);
             }
             context.fillStrokeShape(shape);
           }}
@@ -142,8 +148,8 @@ export const CreaseLayer: React.FC<CreaseLayerProps> = React.memo(({
             context.beginPath();
             for (let i = 0; i < unknowns.length; i++) {
               const c = unknowns[i];
-              context.moveTo(c.p1.x * BASE_PAPER_SIZE, c.p1.y * BASE_PAPER_SIZE);
-              context.lineTo(c.p2.x * BASE_PAPER_SIZE, c.p2.y * BASE_PAPER_SIZE);
+              context.moveTo(c.p1.x * pW, c.p1.y * pH);
+              context.lineTo(c.p2.x * pW, c.p2.y * pH);
             }
             context.fillStrokeShape(shape);
           }}
@@ -159,10 +165,10 @@ export const CreaseLayer: React.FC<CreaseLayerProps> = React.memo(({
       {selected && (
         <Line
           points={[
-            selected.p1.x * BASE_PAPER_SIZE,
-            selected.p1.y * BASE_PAPER_SIZE,
-            selected.p2.x * BASE_PAPER_SIZE,
-            selected.p2.y * BASE_PAPER_SIZE,
+            selected.p1.x * pW,
+            selected.p1.y * pH,
+            selected.p2.x * pW,
+            selected.p2.y * pH,
           ]}
           stroke="#0D99FF"
           strokeWidth={selectedStrokeW}

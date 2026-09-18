@@ -15,6 +15,8 @@ interface MeasurementLayerProps {
   zoom: number;
   onSelect: (id: string) => void;
   onMoveMeasurement: (id: string, endpoint: 'p1' | 'p2', point: Point2D) => void;
+  paperWidth?: number;
+  paperHeight?: number;
 }
 
 export const MeasurementLayer: React.FC<MeasurementLayerProps> = React.memo(({
@@ -25,14 +27,18 @@ export const MeasurementLayer: React.FC<MeasurementLayerProps> = React.memo(({
   zoom,
   onSelect,
   onMoveMeasurement,
+  paperWidth,
+  paperHeight,
 }) => {
+  const pW = paperWidth || BASE_PAPER_SIZE;
+  const pH = paperHeight || BASE_PAPER_SIZE;
   const strokeW = Math.max(1, 1.5 / zoom);
   const fontSize = Math.max(10, 11 / zoom);
   const tickSize = Math.max(3, 4 / zoom);
 
   const renderMeasurement = (p1: Point2D, p2: Point2D, id?: string, isSelected?: boolean) => {
-    const w1 = { x: p1.x * BASE_PAPER_SIZE, y: p1.y * BASE_PAPER_SIZE };
-    const w2 = { x: p2.x * BASE_PAPER_SIZE, y: p2.y * BASE_PAPER_SIZE };
+    const w1 = { x: p1.x * pW, y: p1.y * pH };
+    const w2 = { x: p2.x * pW, y: p2.y * pH };
 
     const distNorm = distance(p1, p2);
     const dx = Math.abs(p2.x - p1.x);
@@ -86,7 +92,7 @@ export const MeasurementLayer: React.FC<MeasurementLayerProps> = React.memo(({
           onTouchStart={(e) => { e.cancelBubble = true; if (id) onSelect(id); }}
           onDragEnd={(e) => {
             e.cancelBubble = true;
-            if (id) onMoveMeasurement(id, 'p1', { x: clamp(e.target.x() / BASE_PAPER_SIZE), y: clamp(e.target.y() / BASE_PAPER_SIZE) });
+            if (id) onMoveMeasurement(id, 'p1', { x: clamp(e.target.x() / pW), y: clamp(e.target.y() / pH) });
           }}
         />
         <Circle
@@ -102,7 +108,7 @@ export const MeasurementLayer: React.FC<MeasurementLayerProps> = React.memo(({
           onTouchStart={(e) => { e.cancelBubble = true; if (id) onSelect(id); }}
           onDragEnd={(e) => {
             e.cancelBubble = true;
-            if (id) onMoveMeasurement(id, 'p2', { x: clamp(e.target.x() / BASE_PAPER_SIZE), y: clamp(e.target.y() / BASE_PAPER_SIZE) });
+            if (id) onMoveMeasurement(id, 'p2', { x: clamp(e.target.x() / pW), y: clamp(e.target.y() / pH) });
           }}
         />
 

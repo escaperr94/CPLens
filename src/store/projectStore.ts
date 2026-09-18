@@ -16,6 +16,10 @@ import {
   LayerVisibility,
   AnalysisReport,
   CPViewMode,
+  CPSheet,
+  CanvasImage,
+  ImageTransform,
+  SheetInsets,
 } from './types';
 
 export interface UIState {
@@ -27,6 +31,7 @@ export interface UIState {
   hoveredPoint: ReferencePoint | null;
   cursorPaper: Point2D | null;
   cursorScreen: Point2D | null;
+  targetPoint: Point2D | null;
   snapCandidate: SnapCandidate | null;
   snappingEnabled: boolean;
   snapOptions: SnapOptions;
@@ -49,13 +54,23 @@ export interface UIState {
   analysisStep: string;
   analysisProgress: number;
   analysisReport: AnalysisReport | null;
+  cropBox: CropBox | null;
+  selectedImageId: string | null;
+  paperPosition: Point2D;
+  imageTransform: ImageTransform;
+  paperInsets: SheetInsets;
+}
+
+export interface AppSnapshot extends ProjectState {
+  paperInsets: SheetInsets;
+  imageTransform: ImageTransform;
+  paperPosition: Point2D;
 }
 
 export interface AppStore extends ProjectState, UIState {
   // History
-  past: ProjectState[];
-  future: ProjectState[];
-
+  past: AppSnapshot[];
+  future: AppSnapshot[];
   // Actions
   pushHistory: () => void;
   undo: () => void;
@@ -115,6 +130,7 @@ export interface AppStore extends ProjectState, UIState {
   zoomAroundPoint: (zoomFactor: number, screenPoint: Point2D) => void;
   fitToPaper: (viewportWidth: number, viewportHeight: number) => void;
   setCursor: (paper: Point2D | null, screen: Point2D | null) => void;
+  setTargetPoint: (point: Point2D | null) => void;
   setSnapCandidate: (snap: SnapCandidate | null) => void;
   toggleSnapping: () => void;
   setLayerVisibility: (layer: keyof LayerVisibility, visible: boolean) => void;
@@ -124,14 +140,36 @@ export interface AppStore extends ProjectState, UIState {
   setDrawingMeasurementStart: (p: Point2D | null) => void;
   setDrawingCreaseStart: (p: Point2D | null) => void;
 
-  // Project serialization
+  // Multi-CP Sheets & Canvas Images
+  sheets: CPSheet[];
+  activeSheetId: string | null;
+  canvasImages: CanvasImage[];
+  setCropBox: (box: CropBox | null) => void;
+  addSheet: (sheet: Partial<CPSheet>) => string;
+  setActiveSheetId: (id: string | null) => void;
+  removeSheet: (id: string) => void;
+  addCanvasImage: (img: Omit<CanvasImage, 'id'>) => string;
+  removeCanvasImage: (id: string) => void;
+  updateCanvasImagePosition: (id: string, x: number, y: number) => void;
+  updateCanvasImage: (id: string, patch: Partial<CanvasImage>) => void;
+  selectCanvasImage: (id: string | null) => void;
+  setReferenceImageFromCropped: (url: string, name?: string, width?: number, height?: number) => void;
+  extractCPFromImage: (imageId: string, box: CropBox) => string;
+  setPaperPosition: (pos: Point2D) => void;
+  updateSheetPosition: (id: string, x: number, y: number) => void;
+  updateSheet: (id: string, patch: Partial<CPSheet>) => void;
+  updateImageTransform: (patch: Partial<ImageTransform>) => void;
+  resetImageTransform: () => void;
+  setPaperInsets: (insets: Partial<SheetInsets>) => void;
+  updateSheetInsets: (sheetId: string, insets: Partial<SheetInsets>) => void;
+  autoTrimBoundary: (sheetId?: string | null) => void;
   getProjectData: () => ProjectState;
   loadProjectData: (data: ProjectState) => void;
 }
 
 const DEFAULT_LAYERS: LayerVisibility = {
   image: true,
-  grid: true,
+  grid: false,
   creases: true,
   boundary: true,
   intersections: false,
@@ -141,11 +179,11 @@ const DEFAULT_LAYERS: LayerVisibility = {
   symmetry: true,
 };
 
-function getSnapshot(state: AppStore): ProjectState {
+function getSnapshot(state: AppStore): AppSnapshot {
   return {
     version: 1,
     image: { ...state.image },
-    paper: { ...state.paper, corners: [...state.paper.corners] as any },
+    paper: { ...state.paper, corners: [...state.paper.corners] as unknown as [Point2D, Point2D, Point2D, Point2D] },
     grid: { ...state.grid },
     points: [...state.points],
     creases: [...state.creases],
@@ -156,6 +194,22 @@ function getSnapshot(state: AppStore): ProjectState {
       axes: [...state.symmetry.axes],
     },
     layers: { ...state.layers },
+    sheets: state.sheets.map((s) => ({
+      ...s,
+      paper: { ...s.paper, corners: [...s.paper.corners] as unknown as [Point2D, Point2D, Point2D, Point2D] },
+      grid: { ...s.grid },
+      points: [...s.points],
+      creases: [...s.creases],
+      measurements: s.measurements ? [...s.measurements] : [],
+      rulers: s.rulers ? [...s.rulers] : [],
+      insets: s.insets ? { ...s.insets } : undefined,
+      transform: s.transform ? { ...s.transform } : undefined,
+    })),
+    activeSheetId: state.activeSheetId,
+    canvasImages: state.canvasImages.map((img) => ({ ...img })),
+    paperInsets: { ...(state.paperInsets || { top: 0, right: 0, bottom: 0, left: 0 }) },
+    imageTransform: { ...state.imageTransform },
+    paperPosition: { ...state.paperPosition },
   };
 }
 
@@ -215,6 +269,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   hoveredPoint: null,
   cursorPaper: null,
   cursorScreen: null,
+  targetPoint: null,
   snapCandidate: null,
   snappingEnabled: true,
   snapOptions: DEFAULT_SNAP_OPTIONS,
@@ -233,11 +288,19 @@ export const useAppStore = create<AppStore>((set, get) => ({
   drawingMeasurementStart: null,
   drawingCreaseStart: null,
   viewMode: 'vector',
-  imageOpacity: 0.45,
+  imageOpacity: 0.85,
   isAnalyzing: false,
   analysisStep: '',
   analysisProgress: 0,
   analysisReport: null,
+  sheets: [],
+  activeSheetId: null,
+  canvasImages: [],
+  selectedImageId: null,
+  cropBox: null,
+  paperPosition: { x: 0, y: 0 },
+  imageTransform: { scale: 1, offsetX: 0, offsetY: 0 },
+  paperInsets: { top: 0, right: 0, bottom: 0, left: 0 },
 
   past: [],
   future: [],
@@ -281,6 +344,12 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
     set({
       ...previous,
+      sheets: previous.sheets ? previous.sheets.map((s) => ({ ...s })) : [],
+      canvasImages: previous.canvasImages ? previous.canvasImages.map((img) => ({ ...img })) : [],
+      activeSheetId: previous.activeSheetId ?? null,
+      paperInsets: previous.paperInsets ? { ...previous.paperInsets } : { top: 0, right: 0, bottom: 0, left: 0 },
+      imageTransform: previous.imageTransform ? { ...previous.imageTransform } : { scale: 1, offsetX: 0, offsetY: 0 },
+      paperPosition: previous.paperPosition ? { ...previous.paperPosition } : { x: 0, y: 0 },
       past: past.slice(0, -1),
       future: [currentSnap, ...future],
     });
@@ -294,6 +363,12 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
     set({
       ...next,
+      sheets: next.sheets ? next.sheets.map((s) => ({ ...s })) : [],
+      canvasImages: next.canvasImages ? next.canvasImages.map((img) => ({ ...img })) : [],
+      activeSheetId: next.activeSheetId ?? null,
+      paperInsets: next.paperInsets ? { ...next.paperInsets } : { top: 0, right: 0, bottom: 0, left: 0 },
+      imageTransform: next.imageTransform ? { ...next.imageTransform } : { scale: 1, offsetX: 0, offsetY: 0 },
+      paperPosition: next.paperPosition ? { ...next.paperPosition } : { x: 0, y: 0 },
       past: [...past, currentSnap],
       future: future.slice(1),
     });
@@ -324,6 +399,10 @@ export const useAppStore = create<AppStore>((set, get) => ({
         homography: toNormalized,
         inverseHomography: toImage,
         aspectRatio: width / (height || 1),
+      },
+      layers: {
+        ...get().layers,
+        image: true,
       },
       points: [],
       creases: [],
@@ -410,8 +489,12 @@ export const useAppStore = create<AppStore>((set, get) => ({
   },
 
   setGridConfig: (patch) => {
+    const actId = get().activeSheetId;
     set((state) => ({
       grid: { ...state.grid, ...patch },
+      sheets: actId && actId !== 'main_cp'
+        ? state.sheets.map((s) => (s.id === actId ? { ...s, grid: { ...s.grid, ...patch } } : s))
+        : state.sheets,
     }));
   },
 
@@ -421,25 +504,43 @@ export const useAppStore = create<AppStore>((set, get) => ({
       ...point,
       id: `pt_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
     };
+    const actId = get().activeSheetId;
     set((state) => ({
       points: [...state.points, newPoint],
       selectedPointId: newPoint.id,
+      sheets: actId && actId !== 'main_cp'
+        ? state.sheets.map((s) => (s.id === actId ? { ...s, points: [...s.points, newPoint] } : s))
+        : state.sheets,
     }));
   },
 
   updatePoint: (id, patch) => {
     get().pushHistory();
-    set((state) => ({
-      points: state.points.map((p) => (p.id === id ? { ...p, ...patch } : p)),
-    }));
+    const actId = get().activeSheetId;
+    set((state) => {
+      const nextPoints = state.points.map((p) => (p.id === id ? { ...p, ...patch } : p));
+      return {
+        points: nextPoints,
+        sheets: actId && actId !== 'main_cp'
+          ? state.sheets.map((s) => (s.id === actId ? { ...s, points: nextPoints } : s))
+          : state.sheets,
+      };
+    });
   },
 
   deletePoint: (id) => {
     get().pushHistory();
-    set((state) => ({
-      points: state.points.filter((p) => p.id !== id),
-      selectedPointId: state.selectedPointId === id ? null : state.selectedPointId,
-    }));
+    const actId = get().activeSheetId;
+    set((state) => {
+      const nextPoints = state.points.filter((p) => p.id !== id);
+      return {
+        points: nextPoints,
+        selectedPointId: state.selectedPointId === id ? null : state.selectedPointId,
+        sheets: actId && actId !== 'main_cp'
+          ? state.sheets.map((s) => (s.id === actId ? { ...s, points: nextPoints } : s))
+          : state.sheets,
+      };
+    });
   },
 
   selectPoint: (id) => set({ selectedPointId: id }),
@@ -450,25 +551,43 @@ export const useAppStore = create<AppStore>((set, get) => ({
       ...crease,
       id: `cr_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
     };
+    const actId = get().activeSheetId;
     set((state) => ({
       creases: [...state.creases, newCrease],
       selectedCreaseId: newCrease.id,
+      sheets: actId && actId !== 'main_cp'
+        ? state.sheets.map((s) => (s.id === actId ? { ...s, creases: [...s.creases, newCrease] } : s))
+        : state.sheets,
     }));
   },
 
   updateCrease: (id, patch) => {
     get().pushHistory();
-    set((state) => ({
-      creases: state.creases.map((c) => (c.id === id ? { ...c, ...patch } : c)),
-    }));
+    const actId = get().activeSheetId;
+    set((state) => {
+      const nextCreases = state.creases.map((c) => (c.id === id ? { ...c, ...patch } : c));
+      return {
+        creases: nextCreases,
+        sheets: actId && actId !== 'main_cp'
+          ? state.sheets.map((s) => (s.id === actId ? { ...s, creases: nextCreases } : s))
+          : state.sheets,
+      };
+    });
   },
 
   deleteCrease: (id) => {
     get().pushHistory();
-    set((state) => ({
-      creases: state.creases.filter((c) => c.id !== id),
-      selectedCreaseId: state.selectedCreaseId === id ? null : state.selectedCreaseId,
-    }));
+    const actId = get().activeSheetId;
+    set((state) => {
+      const nextCreases = state.creases.filter((c) => c.id !== id);
+      return {
+        creases: nextCreases,
+        selectedCreaseId: state.selectedCreaseId === id ? null : state.selectedCreaseId,
+        sheets: actId && actId !== 'main_cp'
+          ? state.sheets.map((s) => (s.id === actId ? { ...s, creases: nextCreases } : s))
+          : state.sheets,
+      };
+    });
   },
 
   selectCrease: (id) => set({ selectedCreaseId: id }),
@@ -618,6 +737,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
     return { cursorPaper: paper, cursorScreen: screen };
   }),
 
+  setTargetPoint: (point) => set({ targetPoint: point }),
+
   setSnapCandidate: (snap) => set((state) => {
     const prev = state.snapCandidate;
     if (!prev && !snap) return state;
@@ -629,9 +750,18 @@ export const useAppStore = create<AppStore>((set, get) => ({
   toggleSnapping: () => set((state) => ({ snappingEnabled: !state.snappingEnabled })),
 
   setLayerVisibility: (layer, visible) => {
-    set((state) => ({
-      layers: { ...state.layers, [layer]: visible },
-    }));
+    const actId = get().activeSheetId;
+    set((state) => {
+      const nextLayers = { ...state.layers, [layer]: visible };
+      const nextGrid = layer === 'grid' ? { ...state.grid, enabled: visible } : state.grid;
+      return {
+        layers: nextLayers,
+        grid: nextGrid,
+        sheets: actId && actId !== 'main_cp' && layer === 'grid'
+          ? state.sheets.map((s) => (s.id === actId ? { ...s, grid: { ...s.grid, enabled: visible } } : s))
+          : state.sheets,
+      };
+    });
   },
 
   setLoupeActive: (active) => {
@@ -653,5 +783,422 @@ export const useAppStore = create<AppStore>((set, get) => ({
       selectedCreaseId: null,
       selectedMeasurementId: null,
     });
+  },
+  setCropBox: (box) => set({ cropBox: box }),
+  setActiveSheetId: (id) => {
+    const prevId = get().activeSheetId;
+    const sheets = get().sheets;
+
+    let updatedSheets = sheets;
+    if (prevId && prevId !== 'main_cp' && prevId !== id) {
+      updatedSheets = updatedSheets.map((s) => {
+        if (s.id === prevId) {
+          return {
+            ...s,
+            grid: get().grid,
+            creases: get().creases,
+            points: get().points,
+            paper: get().paper,
+            measurements: get().measurements,
+            rulers: get().rulers,
+            viewMode: get().viewMode,
+            transform: get().imageTransform,
+          };
+        }
+        return s;
+      });
+    }
+
+    if (id && id !== 'main_cp') {
+      const targetSheet = updatedSheets.find((s) => s.id === id);
+      if (targetSheet) {
+        set({
+          activeSheetId: id,
+          selectedImageId: null,
+          sheets: updatedSheets,
+          grid: { ...targetSheet.grid, enabled: targetSheet.grid.enabled ?? true },
+          creases: targetSheet.creases,
+          points: targetSheet.points,
+          paper: targetSheet.paper,
+          measurements: targetSheet.measurements,
+          rulers: targetSheet.rulers,
+          viewMode: targetSheet.viewMode,
+          imageTransform: targetSheet.transform || { scale: 1, offsetX: 0, offsetY: 0 },
+          selectedCreaseId: null,
+          selectedPointId: null,
+          selectedMeasurementId: null,
+          layers: {
+            ...get().layers,
+            grid: targetSheet.grid.enabled ?? true,
+          },
+        });
+        return;
+      }
+    }
+
+    set({
+      activeSheetId: null,
+      sheets: updatedSheets,
+      imageTransform: { scale: 1, offsetX: 0, offsetY: 0 },
+      selectedCreaseId: null,
+      selectedPointId: null,
+      selectedMeasurementId: null,
+    });
+  },
+  updateImageTransform: (patch) => {
+    const actId = get().activeSheetId;
+    set((state) => {
+      const nextTransform = { ...state.imageTransform, ...patch };
+      return {
+        imageTransform: nextTransform,
+        sheets: actId && actId !== 'main_cp'
+          ? state.sheets.map((s) => (s.id === actId ? { ...s, transform: nextTransform } : s))
+          : state.sheets,
+      };
+    });
+  },
+  resetImageTransform: () => {
+    const actId = get().activeSheetId;
+    const defaultTransform = { scale: 1, offsetX: 0, offsetY: 0 };
+    set((state) => ({
+      imageTransform: defaultTransform,
+      sheets: actId && actId !== 'main_cp'
+        ? state.sheets.map((s) => (s.id === actId ? { ...s, transform: defaultTransform } : s))
+        : state.sheets,
+    }));
+  },
+  selectCanvasImage: (id) => set((state) => ({ selectedImageId: id, activeSheetId: id ? null : state.activeSheetId })),
+  addCanvasImage: (img) => {
+    const id = `img_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const newImage: CanvasImage = { ...img, id };
+    set((state) => ({
+      canvasImages: [...state.canvasImages, newImage],
+      selectedImageId: id,
+    }));
+    return id;
+  },
+  removeCanvasImage: (id) => {
+    set((state) => ({
+      canvasImages: state.canvasImages.filter((i) => i.id !== id),
+      selectedImageId: state.selectedImageId === id ? null : state.selectedImageId,
+    }));
+  },
+  updateCanvasImagePosition: (id, x, y) => {
+    set((state) => ({
+      canvasImages: state.canvasImages.map((i) => (i.id === id ? { ...i, x, y } : i)),
+    }));
+  },
+  updateCanvasImage: (id, patch) => {
+    set((state) => ({
+      canvasImages: state.canvasImages.map((i) => (i.id === id ? { ...i, ...patch } : i)),
+    }));
+  },
+  setReferenceImageFromCropped: (url, name, width, height) => {
+    get().pushHistory();
+    const w = width || 1000;
+    const h = height || 1000;
+    const corners: [Point2D, Point2D, Point2D, Point2D] = [
+      { x: 0, y: 0 },
+      { x: w, y: 0 },
+      { x: w, y: h },
+      { x: 0, y: h },
+    ];
+    const { toNormalized, toImage } = createUnitSquareHomography(corners);
+    set((state) => ({
+      image: {
+        url,
+        fileName: name || 'Cropped_CP.png',
+        width: w,
+        height: h,
+        crop: null,
+      },
+      paper: {
+        corners,
+        rectified: true,
+        homography: toNormalized,
+        inverseHomography: toImage,
+        aspectRatio: w / (h || 1),
+      },
+      imageTransform: { scale: 1, offsetX: 0, offsetY: 0 },
+      layers: {
+        ...state.layers,
+        image: true,
+        boundary: true,
+        grid: true,
+      },
+      grid: {
+        ...state.grid,
+        enabled: true,
+      },
+      activeSheetId: null,
+      selectedImageId: null,
+      cropBox: null,
+      creases: [],
+      points: [],
+      measurements: [],
+      rulers: [],
+    }));
+  },
+  setPaperPosition: (pos) => set({ paperPosition: pos }),
+  updateSheetPosition: (id, x, y) => {
+    set((state) => ({
+      sheets: state.sheets.map((s) => (s.id === id ? { ...s, x, y } : s)),
+    }));
+  },
+  updateSheet: (id, patch) => {
+    set((state) => ({
+      sheets: state.sheets.map((s) => (s.id === id ? { ...s, ...patch } : s)),
+    }));
+  },
+  setPaperInsets: (patch) => {
+    set((state) => ({
+      paperInsets: {
+        top: patch.top ?? state.paperInsets.top,
+        right: patch.right ?? state.paperInsets.right,
+        bottom: patch.bottom ?? state.paperInsets.bottom,
+        left: patch.left ?? state.paperInsets.left,
+      },
+    }));
+  },
+  updateSheetInsets: (sheetId, patch) => {
+    set((state) => ({
+      sheets: state.sheets.map((s) =>
+        s.id === sheetId
+          ? { ...s, insets: { ...(s.insets || { top: 0, right: 0, bottom: 0, left: 0 }), ...patch } }
+          : s
+      ),
+    }));
+  },
+  autoTrimBoundary: async (sheetId) => {
+    const targetSheetId = sheetId ?? get().activeSheetId;
+    let imgUrl: string | undefined | null;
+    let targetW = 1000;
+    let targetH = 1000;
+
+    if (targetSheetId && targetSheetId !== 'main_cp') {
+      const sheet = get().sheets.find((s) => s.id === targetSheetId);
+      if (sheet && sheet.imageUrl) {
+        imgUrl = sheet.imageUrl;
+        targetW = sheet.width;
+        targetH = sheet.height;
+      }
+    } else {
+      imgUrl = get().image.url;
+      targetW = get().image.width || 1000;
+      targetH = get().image.height || 1000;
+    }
+
+    if (!imgUrl) return;
+
+    try {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.src = imgUrl;
+      await new Promise<void>((res, rej) => {
+        if (img.complete && img.naturalWidth > 0) return res();
+        img.onload = () => res();
+        img.onerror = rej;
+      });
+
+      const nw = img.naturalWidth;
+      const nh = img.naturalHeight;
+      if (nw < 20 || nh < 20) return;
+
+      const canvas = document.createElement('canvas');
+      canvas.width = nw;
+      canvas.height = nh;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+      ctx.drawImage(img, 0, 0);
+      const imgData = ctx.getImageData(0, 0, nw, nh);
+      const data = imgData.data;
+
+      // Conservative search: only trim whitespace/empty margins, capped at max 12% of dimension (max 60px)
+      const maxScanY = Math.min(60, Math.floor(nh * 0.12));
+      const maxScanX = Math.min(60, Math.floor(nw * 0.12));
+
+      // Scan rows from top
+      let topY = 0;
+      for (let y = 0; y < maxScanY; y++) {
+        let ink = 0;
+        for (let x = 0; x < nw; x++) {
+          const idx = (y * nw + x) * 4;
+          const r = data[idx], g = data[idx + 1], b = data[idx + 2], a = data[idx + 3];
+          if (a > 50 && (r < 220 || g < 220 || b < 220)) ink++;
+        }
+        if (ink < Math.max(3, nw * 0.025)) {
+          topY = y + 1;
+        } else {
+          break;
+        }
+      }
+
+      // Scan rows from bottom
+      let bottomY = 0;
+      for (let y = nh - 1; y >= nh - 1 - maxScanY; y--) {
+        let ink = 0;
+        for (let x = 0; x < nw; x++) {
+          const idx = (y * nw + x) * 4;
+          const r = data[idx], g = data[idx + 1], b = data[idx + 2], a = data[idx + 3];
+          if (a > 50 && (r < 220 || g < 220 || b < 220)) ink++;
+        }
+        if (ink < Math.max(3, nw * 0.025)) {
+          bottomY = nh - y;
+        } else {
+          break;
+        }
+      }
+
+      // Scan cols from left
+      let leftX = 0;
+      for (let x = 0; x < maxScanX; x++) {
+        let ink = 0;
+        for (let y = topY; y < nh - bottomY; y++) {
+          const idx = (y * nw + x) * 4;
+          const r = data[idx], g = data[idx + 1], b = data[idx + 2], a = data[idx + 3];
+          if (a > 50 && (r < 220 || g < 220 || b < 220)) ink++;
+        }
+        if (ink < Math.max(3, (nh - topY - bottomY) * 0.025)) {
+          leftX = x + 1;
+        } else {
+          break;
+        }
+      }
+
+      // Scan cols from right
+      let rightX = 0;
+      for (let x = nw - 1; x >= nw - 1 - maxScanX; x--) {
+        let ink = 0;
+        for (let y = topY; y < nh - bottomY; y++) {
+          const idx = (y * nw + x) * 4;
+          const r = data[idx], g = data[idx + 1], b = data[idx + 2], a = data[idx + 3];
+          if (a > 50 && (r < 220 || g < 220 || b < 220)) ink++;
+        }
+        if (ink < Math.max(3, (nh - topY - bottomY) * 0.025)) {
+          rightX = nw - x;
+        } else {
+          break;
+        }
+      }
+
+      const scaleX = targetW / nw;
+      const scaleY = targetH / nh;
+      const insets: SheetInsets = {
+        top: Math.round(topY * scaleY),
+        bottom: Math.round(bottomY * scaleY),
+        left: Math.round(leftX * scaleX),
+        right: Math.round(rightX * scaleX),
+      };
+
+      if (targetSheetId && targetSheetId !== 'main_cp') {
+        get().updateSheetInsets(targetSheetId, insets);
+      } else {
+        get().setPaperInsets(insets);
+      }
+    } catch (err) {
+      console.error('autoTrimBoundary error:', err);
+    }
+  },
+  addSheet: (partial) => {
+    const id = partial.id || `sheet_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const paperPos = get().paperPosition;
+    const allRightEdges = [
+      paperPos.x + 1000,
+      ...get().sheets.map((s) => s.x + s.width),
+      ...get().canvasImages.map((i) => i.x + i.width),
+    ];
+    const maxX = Math.max(...allRightEdges);
+    const newX = partial.x !== undefined ? partial.x : maxX + 100;
+    const newY = partial.y !== undefined ? partial.y : paperPos.y;
+
+    const newSheet: CPSheet = {
+      id,
+      name: partial.name || `CP ${get().sheets.length + 1}`,
+      x: newX,
+      y: newY,
+      width: partial.width ?? 1000,
+      height: partial.height ?? 1000,
+      paper: partial.paper || get().paper,
+      grid: partial.grid || { ...get().grid, enabled: true },
+      points: partial.points || [],
+      creases: partial.creases || [],
+      measurements: partial.measurements || [],
+      rulers: partial.rulers || [],
+      viewMode: partial.viewMode || 'vector',
+      ...partial,
+    };
+    set((state) => ({
+      sheets: [...state.sheets, newSheet],
+      activeSheetId: id,
+      grid: newSheet.grid,
+      creases: newSheet.creases,
+      points: newSheet.points,
+      paper: newSheet.paper,
+      selectedImageId: null,
+      cropBox: null,
+      layers: {
+        ...state.layers,
+        grid: newSheet.grid.enabled ?? true,
+      },
+    }));
+    return id;
+  },
+  removeSheet: (id) => {
+    set((state) => ({
+      sheets: state.sheets.filter((s) => s.id !== id),
+      activeSheetId: state.activeSheetId === id ? (state.sheets[0]?.id || null) : state.activeSheetId,
+    }));
+  },
+  extractCPFromImage: (imageId, box) => {
+    const img = get().canvasImages.find((i) => i.id === imageId);
+    const sheetId = `cp_${Date.now()}`;
+    const sheetName = img ? `CP from ${img.name}` : `Extracted CP ${get().sheets.length + 1}`;
+    const paperPos = get().paperPosition;
+    const allRightEdges = [
+      paperPos.x + 1000,
+      ...get().sheets.map((s) => s.x + s.width),
+      ...get().canvasImages.map((i) => i.x + i.width),
+    ];
+    const maxX = Math.max(...allRightEdges);
+    const newX = maxX + 100;
+    const newY = paperPos.y;
+
+    const aspect = (box.width && box.height) ? box.width / box.height : 1;
+    const sheetW = 1000;
+    const sheetH = Math.round(1000 / aspect);
+    const newSheet: CPSheet = {
+      id: sheetId,
+      name: sheetName,
+      x: newX,
+      y: newY,
+      width: sheetW,
+      height: sheetH,
+      sourceImageId: imageId,
+      cropBox: box,
+      paper: {
+        corners: [
+          { x: 0, y: 0 },
+          { x: sheetW, y: 0 },
+          { x: sheetW, y: sheetH },
+          { x: 0, y: sheetH },
+        ],
+        rectified: true,
+        homography: IDENTITY_HOMOGRAPHY,
+        inverseHomography: IDENTITY_HOMOGRAPHY,
+        aspectRatio: aspect,
+      },
+      grid: { ...DEFAULT_GRID_CONFIG, divisionsX: 64, divisionsY: Math.max(8, Math.round(64 / aspect)), enabled: true },
+      points: [],
+      creases: [],
+      measurements: [],
+      rulers: [],
+      viewMode: 'vector',
+    };
+    set((state) => ({
+      sheets: [...state.sheets, newSheet],
+      activeSheetId: sheetId,
+      cropBox: null,
+    }));
+    return sheetId;
   },
 }));

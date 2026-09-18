@@ -1,14 +1,18 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { TopNav } from './ui/TopNav';
-import { Toolbar } from './ui/Toolbar';
+import { LeftSidebar } from './ui/LeftSidebar';
 import { Inspector } from './ui/Inspector';
-import { StatusBar } from './ui/StatusBar';
+import { CanvasRulers } from './ui/CanvasRulers';
+import { FloatingBottomToolbar } from './ui/FloatingBottomToolbar';
+import { FoldingModal } from './ui/FoldingModal';
 import { CPStage } from './canvas/CPStage';
 import { HoverTooltip } from './ui/HoverTooltip';
+import { CanvasHUD } from './ui/CanvasHUD';
 import { AnalysisModal, AnalysisToast } from './ui/AnalysisModal';
 import { CommandPalette } from './ui/CommandPalette';
 import { QuietLanding } from './ui/QuietLanding';
+import { ToolGuideModal, ToolGuideTabId } from './ui/ToolGuideModal';
 import { useShortcuts } from './app/useShortcuts';
 import { useAppStore } from './store/projectStore';
 import { runCPAnalysisPipeline } from './cv/client';
@@ -19,6 +23,9 @@ const SCHWARZ_LANTERN_CP = 'https://upload.wikimedia.org/wikipedia/commons/7/71/
 export const App: React.FC = () => {
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [currentView, setCurrentView] = useState<'studio' | 'landing'>('studio');
+  const [isToolGuideOpen, setIsToolGuideOpen] = useState(false);
+  const [toolGuideTab, setToolGuideTab] = useState<ToolGuideTabId>('crosshairs');
+  const [isFoldingModalOpen, setIsFoldingModalOpen] = useState(false);
   useShortcuts({
     onOpenCommandPalette: () => setIsCommandPaletteOpen((prev) => !prev),
   });
@@ -63,13 +70,13 @@ export const App: React.FC = () => {
 
   // Run automatic analysis pipeline on an image
   const analyzeImage = useCallback(
-    async (imgElement: HTMLImageElement) => {
+    async (imgElement: HTMLImageElement, silent = false) => {
       const source=useAppStore.getState().image.url;
       if(!source||imgElement.src!==new URL(source,window.location.href).href)return;
       analysisController.current?.abort();
       const controller=new AbortController();analysisController.current=controller;
       try {
-        startAnalysis('Initializing computer vision engine...');
+        if (!silent) startAnalysis('Initializing computer vision engine...');
         const canvas = imageToCanvas(imgElement);
 
         const result = await runCPAnalysisPipeline(canvas, (step, percent) => {
@@ -95,8 +102,8 @@ export const App: React.FC = () => {
             divisionsY: result.gridDivisions,
             majorSubdivisions: result.gridDivisions >= 16 ? 8 : 4,
           },
-          layers: { ...state.layers, grid: false },
-          viewMode: 'overlay',
+          layers: { ...state.layers, grid: true, image: true, creases: true },
+          viewMode: 'vector',
           creases: result.creases,
           points: result.referencePoints,
         }));
@@ -104,28 +111,84 @@ export const App: React.FC = () => {
         finishAnalysis(result.report);
 
         setTimeout(() => {
-          fitToPaper(window.innerWidth - 360, window.innerHeight - 80);
+          fitToPaper(window.innerWidth - 500, window.innerHeight - 110);
         }, 100);
       } catch (err) {
         if(controller.signal.aborted)return;
         useAppStore.setState({ isAnalyzing: false });
         console.error('Analysis error:', err);
-        alert('Could not complete automatic analysis. Please try manual calibration.');
+        if (!silent) {
+          alert('Could not complete automatic analysis. Please try manual calibration.');
+        }
       }
     },
     [startAnalysis, updateAnalysisProgress, finishAnalysis, fitToPaper]
   );
 
-  // Trigger analysis for current loaded image
+  // Trigger analysis for currently selected sheet, selected canvas image, or loaded image
   const handleRunAutoAnalysis = useCallback(() => {
-    const currentUrl=useAppStore.getState().image.url;
-    if (!currentUrl) return;
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    img.src = currentUrl;
-    img.onload = () => {
-      analyzeImage(img);
-    };
+    const state = useAppStore.getState();
+    const activeSheet = state.sheets.find((s) => s.id === state.activeSheetId);
+
+    // If an extracted sheet is active and has an imageUrl, analyze that sheet!
+    if (activeSheet && activeSheet.imageUrl && activeSheet.id !== 'main_cp') {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.src = activeSheet.imageUrl;
+      img.onload = async () => {
+        try {
+          state.startAnalysis(`Analyzing ${activeSheet.name}...`);
+          const canvas = document.createElement('canvas');
+          canvas.width = img.naturalWidth || img.width || 1000;
+          canvas.height = img.naturalHeight || img.height || 1000;
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+            ctx.drawImage(img, 0, 0);
+          }
+
+          const result = await runCPAnalysisPipeline(canvas, (step, percent) => {
+            state.updateAnalysisProgress(step, percent);
+          });
+
+          state.updateSheet(activeSheet.id, {
+            creases: result.creases,
+            points: result.referencePoints,
+            grid: {
+              ...activeSheet.grid,
+              enabled: true,
+              divisionsX: result.gridDivisions,
+              divisionsY: result.gridDivisions,
+            },
+          });
+          state.finishAnalysis(result.report);
+        } catch (err) {
+          useAppStore.setState({ isAnalyzing: false });
+          console.error('Sheet analysis error:', err);
+        }
+      };
+      return;
+    }
+
+    const selectedImg = state.canvasImages.find((i) => i.id === state.selectedImageId);
+    if (selectedImg) {
+      state.setReferenceImageFromCropped(selectedImg.url, selectedImg.name, selectedImg.width, selectedImg.height);
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.src = selectedImg.url;
+      img.onload = () => {
+        analyzeImage(img);
+      };
+      return;
+    }
+
+    if (state.image.url) {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.src = state.image.url;
+      img.onload = () => {
+        analyzeImage(img);
+      };
+    }
   }, [analyzeImage]);
 
   // Load and auto-vectorize CP.png
@@ -180,7 +243,7 @@ export const App: React.FC = () => {
       }));
 
       setTimeout(() => {
-        fitToPaper(window.innerWidth - 360, window.innerHeight - 80);
+        fitToPaper(window.innerWidth - 540, window.innerHeight - 80);
       }, 100);
     };
   }, [loadImage, fitToPaper]);
@@ -199,7 +262,7 @@ export const App: React.FC = () => {
   // Load CP.png automatically on initial mount
   useEffect(() => {
     let cancelled=false;const img=new Image();
-    img.onload=()=>{if(cancelled||useAppStore.getState().image.url)return;loadImage('/CP.png','CP.png',img.naturalWidth,img.naturalHeight);analyzeImage(img);};
+    img.onload=()=>{if(cancelled||useAppStore.getState().image.url)return;loadImage('/CP.png','CP.png',img.naturalWidth,img.naturalHeight);analyzeImage(img, true);};
     img.src='/CP.png';
     return ()=>{cancelled=true;};
   }, [loadImage,analyzeImage]);
@@ -218,11 +281,31 @@ export const App: React.FC = () => {
             reader.onload = (event) => {
               const url = event.target?.result as string;
               const img = new Image();
-              img.src = url;
               img.onload = () => {
-                loadImage(url, 'Pasted_Screenshot.png', img.naturalWidth, img.naturalHeight);
-                analyzeImage(img);
+                const store = useAppStore.getState();
+                if (!store.image.url) {
+                  store.loadImage(url, 'Pasted_Screenshot.png', img.naturalWidth, img.naturalHeight);
+                } else {
+                  const paperPos = store.paperPosition;
+                  const allRightEdges = [
+                    paperPos.x + 1000,
+                    ...store.sheets.map((s) => s.x + s.width),
+                    ...store.canvasImages.map((i) => i.x + i.width),
+                  ];
+                  const newX = Math.max(...allRightEdges) + 80;
+                  const newId = store.addCanvasImage({
+                    url,
+                    name: `Pasted_${Date.now().toString().slice(-4)}.png`,
+                    x: newX,
+                    y: paperPos.y,
+                    width: Math.min(img.naturalWidth || 800, 1000),
+                    height: Math.min(img.naturalHeight || 800, 1000),
+                  });
+                  store.selectCanvasImage(newId);
+                  store.setActiveSheetId(null);
+                }
               };
+              img.src = url;
             };
             reader.readAsDataURL(file);
           }
@@ -248,11 +331,31 @@ export const App: React.FC = () => {
       reader.onload = (event) => {
         const url = event.target?.result as string;
         const img = new Image();
-        img.src = url;
         img.onload = () => {
-          loadImage(url, file.name, img.naturalWidth, img.naturalHeight);
-          analyzeImage(img);
+          const store = useAppStore.getState();
+          if (!store.image.url) {
+            store.loadImage(url, file.name, img.naturalWidth, img.naturalHeight);
+          } else {
+            const paperPos = store.paperPosition;
+            const allRightEdges = [
+              paperPos.x + 1000,
+              ...store.sheets.map((s) => s.x + s.width),
+              ...store.canvasImages.map((i) => i.x + i.width),
+            ];
+            const newX = Math.max(...allRightEdges) + 80;
+            const newId = store.addCanvasImage({
+              url,
+              name: file.name,
+              x: newX,
+              y: paperPos.y,
+              width: Math.min(img.naturalWidth || 800, 1000),
+              height: Math.min(img.naturalHeight || 800, 1000),
+            });
+            store.selectCanvasImage(newId);
+            store.setActiveSheetId(null);
+          }
         };
+        img.src = url;
       };
       reader.readAsDataURL(file);
     }
@@ -276,32 +379,55 @@ export const App: React.FC = () => {
         onLoadDove={handleLoadDove}
         onLoadSchwarz={handleLoadSchwarz}
         onOpenLanding={() => setCurrentView('landing')}
+        onOpenToolGuide={() => setIsToolGuideOpen(true)}
       />
-      {/* Main Workspace Canvas */}
+      {/* Main Workspace Layout: 3 Columns (LeftSidebar 240px | Center Stage with Rulers | Inspector Right) */}
       <div className="flex flex-1 relative overflow-hidden">
-        {/* Floating Figma Toolbar */}
-        <Toolbar />
+        {/* Docked Left Sidebar */}
+        <LeftSidebar
+          onLoadCP={handleLoadCP}
+          onLoadDove={handleLoadDove}
+          onLoadSchwarz={handleLoadSchwarz}
+          onOpenToolGuide={() => setIsToolGuideOpen(true)}
+        />
 
-        {/* Central CAD Stage */}
-        <main className="flex-1 relative h-full">
-          <CPStage />
+        {/* Central CAD Stage with Canvas Rulers & Floating Status Pill */}
+        <main className="flex-1 min-w-0 relative h-full bg-[#F7F7F7] overflow-hidden">
+          {/* Top & Left Rulers */}
+          <CanvasRulers />
+
+          {/* Stage offset by 20px top and left */}
+          <div className="absolute top-[20px] left-[20px] right-0 bottom-0 overflow-hidden">
+            <CPStage />
+          </div>
+
+          {/* Unified Figma Floating Bottom Toolbar */}
+          <FloatingBottomToolbar
+            onOpenFoldingSequences={() => setIsFoldingModalOpen(true)}
+            onOpenToolGuide={() => setIsToolGuideOpen(true)}
+            onRunAutoAnalysis={handleRunAutoAnalysis}
+          />
+
+          {/* Floating Help Button (?) at bottom right matching Figma */}
+          <button
+            type="button"
+            onClick={() => setIsToolGuideOpen(true)}
+            className="absolute bottom-5 right-5 z-20 w-8 h-8 rounded-full bg-white border border-[#E5E5E5] shadow-[0_2px_8px_rgba(0,0,0,0.08)] flex items-center justify-center text-gray-500 hover:text-black hover:bg-gray-50 font-semibold text-sm cursor-pointer transition-colors"
+            title="Origami Tool Guide & Shortcuts (?)"
+          >
+            ?
+          </button>
         </main>
 
         {/* Figma Right Properties Inspector */}
         <Inspector onRunAutoAnalysis={handleRunAutoAnalysis} />
       </div>
-
-      {/* Bottom Status Bar */}
-      <StatusBar />
-
       {/* Floating Hover Card for Reference Points */}
       <HoverTooltip />
 
       {/* Analysis Progress Modal */}
       <AnalysisModal />
 
-      {/* Analysis Results Toast */}
-      <AnalysisToast />
 
       {/* Cmd+K Command Palette */}
       <CommandPalette
@@ -312,6 +438,18 @@ export const App: React.FC = () => {
         onLoadDove={handleLoadDove}
         onLoadSchwarz={handleLoadSchwarz}
         onOpenLanding={() => setCurrentView('landing')}
+      />
+
+      {/* Origami CAD Tool Guide Modal */}
+      <ToolGuideModal
+        isOpen={isToolGuideOpen}
+        onClose={() => setIsToolGuideOpen(false)}
+        initialTab={toolGuideTab}
+      />
+      {/* Origami Folding Sequences Step-by-Step Solver Modal */}
+      <FoldingModal
+        isOpen={isFoldingModalOpen}
+        onClose={() => setIsFoldingModalOpen(false)}
       />
     </div>
   );

@@ -121,6 +121,9 @@ export function useShortcuts(options?: ShortcutOptions) {
         case 'h':
           setActiveTool('pan');
           break;
+        case 'e':
+          setActiveTool('eraser');
+          break;
         case 'p':
           setActiveTool('point');
           break;

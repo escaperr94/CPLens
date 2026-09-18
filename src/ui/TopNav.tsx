@@ -1,19 +1,31 @@
 import React, { useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import {
-  Download,
+  Lock,
+  ChevronDown,
+  MousePointer2,
+  Hand,
+  Grid,
+  Square,
+  Minus,
+  Type,
+  PenTool,
+  Component,
+  MoreHorizontal,
+  Share2,
+  Play,
   RotateCcw,
   RotateCw,
-  Magnet,
-  Eye,
-  Sparkles,
-  Search,
-  ChevronDown,
   FileCode,
+  Download,
   Table,
-  FileText,
+  Sparkles,
+  HelpCircle,
+  ExternalLink,
+  Compass,
 } from 'lucide-react';
 import { useAppStore } from '../store/projectStore';
+import { ToolType } from '../store/types';
 import {
   exportProjectJson,
   exportSvg,
@@ -29,6 +41,7 @@ interface TopNavProps {
   onLoadDove: () => void;
   onLoadSchwarz: () => void;
   onOpenLanding?: () => void;
+  onOpenToolGuide?: () => void;
 }
 
 export const TopNav: React.FC<TopNavProps> = ({
@@ -38,11 +51,15 @@ export const TopNav: React.FC<TopNavProps> = ({
   onLoadDove,
   onLoadSchwarz,
   onOpenLanding,
+  onOpenToolGuide,
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const jsonInputRef = useRef<HTMLInputElement>(null);
-  const [showExportMenu, setShowExportMenu] = useState(false);
+
+  const [showFileMenu, setShowFileMenu] = useState(false);
+  const [showShareMenu, setShowShareMenu] = useState(false);
   const [showZoomMenu, setShowZoomMenu] = useState(false);
+  const [showMoreToolsMenu, setShowMoreToolsMenu] = useState(false);
 
   const {
     image,
@@ -50,40 +67,31 @@ export const TopNav: React.FC<TopNavProps> = ({
     camera,
     setCamera,
     fitToPaper,
-    snappingEnabled,
-    toggleSnapping,
+    activeTool,
+    setActiveTool,
     undo,
     redo,
     past,
     future,
     getProjectData,
     loadProjectData,
-    loupe,
-    setLoupeActive,
-    viewMode,
-    setViewMode,
-  } = useAppStore(useShallow((state) => ({
-    image: state.image,
-    loadImage: state.loadImage,
-    camera: state.camera,
-    setCamera: state.setCamera,
-    fitToPaper: state.fitToPaper,
-    snappingEnabled: state.snappingEnabled,
-    toggleSnapping: state.toggleSnapping,
-    undo: state.undo,
-    redo: state.redo,
-    past: state.past,
-    future: state.future,
-    getProjectData: state.getProjectData,
-    loadProjectData: state.loadProjectData,
-    loupe: state.loupe,
-    setLoupeActive: state.setLoupeActive,
-    viewMode: state.viewMode,
-    setViewMode: state.setViewMode,
-  })));
-
-  const isMac = typeof navigator !== 'undefined' && /mac/i.test(navigator.platform || navigator.userAgent);
-  const modKey = isMac ? '⌘' : 'Ctrl';
+  } = useAppStore(
+    useShallow((state) => ({
+      image: state.image,
+      loadImage: state.loadImage,
+      camera: state.camera,
+      setCamera: state.setCamera,
+      fitToPaper: state.fitToPaper,
+      activeTool: state.activeTool,
+      setActiveTool: state.setActiveTool,
+      undo: state.undo,
+      redo: state.redo,
+      past: state.past,
+      future: state.future,
+      getProjectData: state.getProjectData,
+      loadProjectData: state.loadProjectData,
+    }))
+  );
 
   const handleImageFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -96,7 +104,7 @@ export const TopNav: React.FC<TopNavProps> = ({
       img.src = url;
       img.onload = () => {
         loadImage(url, file.name, img.naturalWidth, img.naturalHeight);
-        fitToPaper(window.innerWidth - 360, window.innerHeight - 80);
+        fitToPaper(window.innerWidth - 500, window.innerHeight - 110);
         setTimeout(() => {
           onRunAutoAnalysis();
         }, 150);
@@ -123,9 +131,12 @@ export const TopNav: React.FC<TopNavProps> = ({
     e.target.value = '';
   };
 
+  const docTitle = image.fileName || 'CP.png';
+  const zoomPercent = Math.round(camera.zoom * 100);
+
   return (
-    <header className="h-12 bg-white/95 backdrop-blur-md border-b border-neutral-200/80 px-4 flex items-center justify-between text-xs text-neutral-800 select-none z-30 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">
-      {/* Hidden file inputs */}
+    <header className="h-[44px] bg-white border-b border-[#E5E5E5] px-3 flex items-center justify-between text-xs text-[#111827] select-none z-30 shrink-0 relative">
+      {/* Hidden File Inputs */}
       <input
         ref={fileInputRef}
         type="file"
@@ -141,282 +152,291 @@ export const TopNav: React.FC<TopNavProps> = ({
         onChange={handleJsonFile}
       />
 
-      {/* Left Section: macOS Traffic Lights + Logo + Untitled CP + Sample Pills + Undo/Redo */}
-      <div className="flex items-center space-x-2.5">
-        {/* macOS Window Controls */}
-        <div className="flex items-center space-x-2 mr-1">
-          <div className="w-3 h-3 rounded-full bg-[#FF5F56] border border-[#E0443E]/60 shadow-2xs" />
-          <div className="w-3 h-3 rounded-full bg-[#FFBD2E] border border-[#DEA123]/60 shadow-2xs" />
-          <div className="w-3 h-3 rounded-full bg-[#27C93F] border border-[#1AAB29]/60 shadow-2xs" />
-        </div>
-
-        {/* Brand Logo & App Name */}
-        <div className="flex items-center space-x-1.5">
+      {/* LEFT GROUP: Logo + Menu Chevron + Divider + Lock Doc Title + Status */}
+      <div className="flex items-center gap-1.5 min-w-0">
+        {/* Origami Bird Logo Button (NO CPLens text) */}
+        <button
+          type="button"
+          onClick={() => setShowFileMenu((prev) => !prev)}
+          className="p-1 rounded hover:bg-gray-100 transition-colors flex items-center justify-center shrink-0 cursor-pointer"
+          title="CP Lens Menu"
+        >
           <img src="/logo_ori.png" alt="Logo" className="w-5 h-5 object-contain" />
-          <span className="font-semibold text-neutral-900 text-[13px] tracking-tight">CP Lens</span>
-        </div>
-
-        {/* File Name Dropdown */}
-        <div className="flex items-center space-x-1 text-neutral-600 hover:text-neutral-900 cursor-pointer px-1 py-0.5 rounded hover:bg-neutral-100 transition">
-          <span className="font-normal text-xs text-neutral-500 max-w-[110px] truncate">
-            {image.fileName || 'Untitled CP'}
-          </span>
-          <ChevronDown className="w-3 h-3 text-neutral-400" />
-        </div>
-
-        <div className="h-4 w-px bg-neutral-200 mx-0.5" />
-
-        {/* Quick Sample Buttons */}
-        <button
-          onClick={onLoadCP}
-          className="flex items-center space-x-1 px-2.5 py-1 bg-[#FFFBEB] hover:bg-[#FEF3C7] text-[#92400E] border border-[#FDE68A] rounded-xl font-medium text-xs shadow-2xs transition"
-          title="Load CP.png (32x32 lattice) and auto-vectorize"
-        >
-          <Sparkles className="w-3.5 h-3.5 text-[#F59E0B]" />
-          <span>CP.png</span>
         </button>
 
+        {/* Menu chevron button */}
         <button
-          onClick={onLoadDove}
-          className="flex items-center space-x-1 px-2.5 py-1 bg-white hover:bg-neutral-50 text-neutral-700 border border-neutral-200 rounded-xl font-medium text-xs shadow-2xs transition"
-          title="Load Dove.png example"
+          type="button"
+          onClick={() => setShowFileMenu((prev) => !prev)}
+          className="w-5 h-5 rounded hover:bg-gray-100 flex items-center justify-center text-gray-500 transition-colors cursor-pointer"
+          title="Document actions"
         >
-          <FileText className="w-3.5 h-3.5 text-neutral-400" />
-          <span>Dove.png</span>
+          <ChevronDown className="w-3.5 h-3.5 text-gray-500" />
         </button>
 
-        <button
-          onClick={onLoadSchwarz}
-          className="hidden xl:flex items-center space-x-1 px-2.5 py-1 bg-white hover:bg-neutral-50 text-neutral-700 border border-neutral-200 rounded-xl font-medium text-xs shadow-2xs transition"
-          title="Load the CC0 Schwarz lantern crease pattern from Wikimedia Commons"
-        >
-          <FileCode className="w-3.5 h-3.5 text-emerald-500" />
-          <span>Schwarz CP</span>
-        </button>
+        {/* Thin vertical divider */}
+        <div className="h-4 w-px bg-[#E5E5E5] mx-1 shrink-0" />
 
-        {/* Add File (+) Button */}
-        <button
-          onClick={() => fileInputRef.current?.click()}
-          className="w-7 h-7 flex items-center justify-center bg-white hover:bg-neutral-50 text-neutral-600 hover:text-neutral-900 border border-neutral-200 rounded-xl text-sm font-medium shadow-2xs transition cursor-pointer"
-          title="Open custom crease pattern image"
-        >
-          +
-        </button>
-
-        {/* Undo / Redo */}
-        <div className="flex items-center space-x-0.5">
+        {/* Document Title with Lock Icon & Dropdown */}
+        <div className="relative flex items-center">
           <button
-            onClick={undo}
-            disabled={past.length === 0}
-            className="p-1.5 hover:bg-neutral-100 rounded-lg text-neutral-500 hover:text-neutral-800 disabled:opacity-30 transition"
-            title={`Undo (${modKey}+Z)`}
+            type="button"
+            onClick={() => setShowFileMenu((prev) => !prev)}
+            className="flex items-center gap-1.5 px-1.5 py-1 rounded hover:bg-gray-100 transition-colors cursor-pointer max-w-[200px]"
+            title="Switch or rename document"
           >
-            <RotateCcw className="w-3.5 h-3.5" />
-          </button>
-          <button
-            onClick={redo}
-            disabled={future.length === 0}
-            className="p-1.5 hover:bg-neutral-100 rounded-lg text-neutral-500 hover:text-neutral-800 disabled:opacity-30 transition"
-            title={`Redo (${isMac ? '⌘+Shift+Z' : 'Ctrl+Y'})`}
-          >
-            <RotateCw className="w-3.5 h-3.5" />
-          </button>
-        </div>
-      </div>
-
-      {/* Center Section: View Mode (Vector CP / Overlay / Image) & Search Palette */}
-      <div className="flex items-center space-x-2">
-        {/* View Mode Segmented Control */}
-        <div className="flex items-center bg-neutral-100/90 p-0.5 rounded-xl border border-neutral-200/80 shadow-2xs">
-          <button
-            onClick={() => setViewMode('vector')}
-            className={`px-3 py-1 rounded-lg text-xs font-medium transition cursor-pointer ${viewMode === 'vector'
-                ? 'bg-white text-neutral-900 shadow-xs font-semibold'
-                : 'text-neutral-500 hover:text-neutral-900'
-              }`}
-            title="Clean Vector Crease Pattern (Orihime / Oridieta style)"
-          >
-            Vector CP
-          </button>
-          <button
-            onClick={() => setViewMode('overlay')}
-            className={`px-3 py-1 rounded-lg text-xs font-medium transition cursor-pointer ${viewMode === 'overlay'
-                ? 'bg-white text-neutral-900 shadow-xs font-semibold'
-                : 'text-neutral-500 hover:text-neutral-900'
-              }`}
-            title="Vector creases overlaid on top of source raster image"
-          >
-            Overlay
-          </button>
-          <button
-            onClick={() => setViewMode('image')}
-            className={`px-3 py-1 rounded-lg text-xs font-medium transition cursor-pointer ${viewMode === 'image'
-                ? 'bg-white text-neutral-900 shadow-xs font-semibold'
-                : 'text-neutral-500 hover:text-neutral-900'
-              }`}
-            title="Original raster image only"
-          >
-            Image
-          </button>
-        </div>
-
-        {/* Search Palette */}
-        <button
-          onClick={onOpenCommandPalette}
-          className="hidden lg:flex items-center justify-between w-52 px-3 py-1 bg-neutral-50/80 hover:bg-neutral-100/90 border border-neutral-200/80 rounded-xl text-neutral-400 cursor-pointer shadow-2xs transition"
-        >
-          <div className="flex items-center space-x-2">
-            <Search className="w-3.5 h-3.5 text-neutral-400" />
-            <span className="text-xs text-neutral-400">Search commands...</span>
-          </div>
-          <kbd className="text-[10px] font-mono text-neutral-400 bg-white px-1.5 py-0.5 rounded border border-neutral-200/60 shadow-2xs">
-            {modKey}K
-          </kbd>
-        </button>
-
-        {onOpenLanding && (
-          <button
-            onClick={onOpenLanding}
-            className="flex items-center space-x-1.5 px-3 py-1 bg-white hover:bg-[#E1E8F5] border border-[#E5E5EA] text-[#4F6BA6] rounded-xl text-xs font-medium shadow-2xs transition cursor-pointer"
-            title="View Quiet Premium Landing & Waitlist"
-          >
-            <Sparkles className="w-3.5 h-3.5 text-[#4F6BA6]" />
-            <span>Overview</span>
-          </button>
-        )}
-      </div>
-
-      {/* Right Section: Snap: ON, Loupe, 56% dropdown, Export solid blue */}
-      <div className="flex items-center space-x-2">
-        {/* Snapping Toggle Pill */}
-        <button
-          onClick={toggleSnapping}
-          className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-xl text-xs font-medium transition shadow-2xs ${snappingEnabled
-            ? 'bg-[#E1E8F5] text-[#4F6BA6] border border-[#4F6BA6]/30'
-            : 'bg-white text-neutral-500 border border-neutral-200 hover:bg-neutral-50'
-            }`}
-          title="Toggle Snapping (S)"
-        >
-          <Magnet className="w-3.5 h-3.5" />
-          <span>Snap: {snappingEnabled ? 'ON' : 'OFF'}</span>
-        </button>
-
-        {/* Loupe Toggle Pill */}
-        <button
-          onClick={() => setLoupeActive(!loupe.active)}
-          className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-xl text-xs font-medium transition shadow-2xs ${loupe.active
-            ? 'bg-purple-50 text-purple-600 border border-purple-200'
-            : 'bg-white text-neutral-700 border border-neutral-200 hover:bg-neutral-50'
-            }`}
-          title="Toggle Loupe Magnifier (Hold Alt)"
-        >
-          <Eye className="w-3.5 h-3.5" />
-          <span>Loupe</span>
-        </button>
-
-        {/* Zoom Dropdown Pill */}
-        <div className="relative">
-          <button
-            onClick={() => setShowZoomMenu(!showZoomMenu)}
-            className="flex items-center space-x-1.5 px-3 py-1.5 bg-white hover:bg-neutral-50 border border-neutral-200 rounded-xl text-xs font-mono font-medium text-neutral-700 transition shadow-2xs"
-          >
-            <span>{(camera.zoom * 100).toFixed(0)}%</span>
-            <ChevronDown className="w-3 h-3 text-neutral-400" />
+            <Lock className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+            <span className="font-medium text-xs text-gray-900 truncate">{docTitle}</span>
+            <ChevronDown className="w-3 h-3 text-gray-400 shrink-0" />
           </button>
 
-          {showZoomMenu && (
+          {/* Document / Main Menu Dropdown */}
+          {showFileMenu && (
             <div
-              className="absolute right-0 mt-1 w-32 bg-white rounded-xl shadow-lg border border-neutral-200 py-1 z-50 text-xs font-sans"
-              onClick={() => setShowZoomMenu(false)}
+              className="absolute left-0 top-full mt-1 w-56 bg-white rounded-md shadow-lg border border-[#E5E5E5] py-1 z-50 text-xs font-sans"
+              onClick={() => setShowFileMenu(false)}
             >
+              <div className="px-3 py-1.5 text-[11px] font-semibold text-gray-400 uppercase tracking-wider">
+                Sample Files
+              </div>
               <button
-                onClick={() => fitToPaper(window.innerWidth - 360, window.innerHeight - 80)}
-                className="w-full text-left px-3 py-1.5 hover:bg-neutral-100 flex justify-between"
+                type="button"
+                onClick={onLoadCP}
+                className="w-full text-left px-3 py-1.5 hover:bg-gray-100 flex items-center gap-2 text-gray-700"
               >
-                <span>Fit Paper</span>
-                <kbd className="font-mono text-[10px] text-neutral-400">0</kbd>
+                <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+                <span>CP.png (Default CP)</span>
               </button>
               <button
-                onClick={() => setCamera({ zoom: 1 })}
-                className="w-full text-left px-3 py-1.5 hover:bg-neutral-100 flex justify-between"
+                type="button"
+                onClick={onLoadDove}
+                className="w-full text-left px-3 py-1.5 hover:bg-gray-100 flex items-center gap-2 text-gray-700"
               >
-                <span>Zoom 100%</span>
-                <kbd className="font-mono text-[10px] text-neutral-400">1</kbd>
+                <span>Dove.png</span>
               </button>
               <button
-                onClick={() => setCamera({ zoom: 2 })}
-                className="w-full text-left px-3 py-1.5 hover:bg-neutral-100"
+                type="button"
+                onClick={onLoadSchwarz}
+                className="w-full text-left px-3 py-1.5 hover:bg-gray-100 flex items-center gap-2 text-gray-700"
               >
-                Zoom 200%
+                <span>Schwarz CP.png</span>
+              </button>
+
+              <div className="h-px bg-[#E5E5E5] my-1" />
+
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="w-full text-left px-3 py-1.5 hover:bg-gray-100 text-gray-700"
+              >
+                Open Image File...
               </button>
               <button
-                onClick={() => setCamera({ zoom: 4 })}
-                className="w-full text-left px-3 py-1.5 hover:bg-neutral-100"
+                type="button"
+                onClick={() => jsonInputRef.current?.click()}
+                className="w-full text-left px-3 py-1.5 hover:bg-gray-100 text-gray-700"
               >
-                Zoom 400%
+                Open Project JSON...
               </button>
+
+              <div className="h-px bg-[#E5E5E5] my-1" />
+
+              <button
+                type="button"
+                onClick={onOpenCommandPalette}
+                className="w-full text-left px-3 py-1.5 hover:bg-gray-100 flex items-center justify-between text-gray-700"
+              >
+                <span>Command Palette</span>
+                <span className="font-mono text-[10px] text-gray-400">⌘K</span>
+              </button>
+
+              {onOpenToolGuide && (
+                <button
+                  type="button"
+                  onClick={onOpenToolGuide}
+                  className="w-full text-left px-3 py-1.5 hover:bg-gray-100 flex items-center gap-2 text-gray-700"
+                >
+                  <HelpCircle className="w-3.5 h-3.5 text-gray-400" />
+                  <span>Origami Tool Guide</span>
+                </button>
+              )}
+
+              {onOpenLanding && (
+                <button
+                  type="button"
+                  onClick={onOpenLanding}
+                  className="w-full text-left px-3 py-1.5 hover:bg-gray-100 flex items-center gap-2 text-gray-700"
+                >
+                  <ExternalLink className="w-3.5 h-3.5 text-gray-400" />
+                  <span>Overview & Landing</span>
+                </button>
+              )}
             </div>
           )}
         </div>
 
-        {/* Export Solid Blue Button */}
+        {/* Status Text: "Edited just now" */}
+        <span className="text-[11px] text-gray-400 ml-1 hidden sm:inline-block shrink-0">
+          Edited just now
+        </span>
+
+      </div>
+
+
+      {/* RIGHT GROUP: Avatar + Share + Play + Zoom */}
+      <div className="flex items-center gap-2">
+        {/* User 1 Avatar ("E") */}
+        <div
+          className="w-6 h-6 rounded-full bg-[#E0E7FF] text-[#4338CA] text-[10px] font-semibold flex items-center justify-center shrink-0 cursor-default select-none border border-indigo-200"
+          title="User E"
+        >
+          E
+        </div>
+
+        {/* User 2 Avatar (Purple Gradient) */}
+        <div
+          className="w-6 h-6 rounded-full bg-gradient-to-tr from-purple-500 to-indigo-400 text-white text-[9px] font-semibold flex items-center justify-center shrink-0 cursor-default select-none shadow-2xs"
+          title="Collaborator"
+        >
+          ✦
+        </div>
+
+        {/* Share Button (Figma Blue) */}
         <div className="relative">
           <button
-            onClick={() => setShowExportMenu(!showExportMenu)}
-            className="flex items-center space-x-1.5 px-3.5 py-1.5 bg-[#4F6BA6] hover:bg-[#5D7BB8] text-white rounded-xl text-xs font-semibold shadow-quiet-button transition cursor-pointer"
+            type="button"
+            onClick={() => setShowShareMenu((prev) => !prev)}
+            className="h-7 px-3 bg-[#18A0FB] hover:bg-[#0D90EE] text-white text-xs font-medium rounded-md flex items-center justify-center transition-colors cursor-pointer shadow-2xs"
+            title="Share & Export Crease Pattern"
           >
-            <Download className="w-3.5 h-3.5" />
-            <span>Export</span>
-            <ChevronDown className="w-3 h-3 text-white/80 ml-0.5" />
+            <span>Share</span>
           </button>
 
-          {showExportMenu && (
+          {/* Share & Export Dropdown */}
+          {showShareMenu && (
             <div
-              className="absolute right-0 mt-1 w-52 bg-white rounded-xl shadow-xl border border-neutral-200 py-1.5 z-50 text-xs font-sans"
-              onClick={() => setShowExportMenu(false)}
+              className="absolute right-0 top-full mt-1 w-52 bg-white rounded-md shadow-lg border border-[#E5E5E5] py-1.5 z-50 text-xs font-sans"
+              onClick={() => setShowShareMenu(false)}
             >
+              <div className="px-3 py-1 text-[11px] font-semibold text-gray-400 uppercase tracking-wider">
+                Export Options
+              </div>
               <button
+                type="button"
                 onClick={() => exportOriOrCpFile(getProjectData(), 'cp')}
-                className="w-full text-left px-3.5 py-2 hover:bg-blue-50 flex items-center space-x-2 text-blue-600 font-medium"
+                className="w-full text-left px-3 py-1.5 hover:bg-blue-50 flex items-center gap-2 text-blue-600 font-medium"
               >
                 <FileCode className="w-3.5 h-3.5" />
                 <span>Oridieta / Orihime (.cp)</span>
               </button>
               <button
+                type="button"
                 onClick={() => exportOriOrCpFile(getProjectData(), 'ori')}
-                className="w-full text-left px-3.5 py-2 hover:bg-blue-50 flex items-center space-x-2 text-blue-600 font-medium"
+                className="w-full text-left px-3 py-1.5 hover:bg-blue-50 flex items-center gap-2 text-blue-600 font-medium"
               >
                 <FileCode className="w-3.5 h-3.5" />
                 <span>Oridieta (.ori)</span>
               </button>
-              <div className="h-px bg-neutral-100 my-1" />
+              <div className="h-px bg-[#E5E5E5] my-1" />
               <button
+                type="button"
                 onClick={() => exportSvg(getProjectData())}
-                className="w-full text-left px-3.5 py-2 hover:bg-neutral-50 flex items-center space-x-2 text-neutral-700"
+                className="w-full text-left px-3 py-1.5 hover:bg-gray-100 flex items-center gap-2 text-gray-700"
               >
-                <FileCode className="w-3.5 h-3.5 text-neutral-400" />
+                <Download className="w-3.5 h-3.5 text-gray-400" />
                 <span>Layered Vector SVG</span>
               </button>
               <button
+                type="button"
                 onClick={() => exportProjectJson(getProjectData())}
-                className="w-full text-left px-3.5 py-2 hover:bg-neutral-50 flex items-center space-x-2 text-neutral-700"
+                className="w-full text-left px-3 py-1.5 hover:bg-gray-100 flex items-center gap-2 text-gray-700"
               >
-                <Download className="w-3.5 h-3.5 text-neutral-400" />
+                <Download className="w-3.5 h-3.5 text-gray-400" />
                 <span>Project JSON (v1)</span>
               </button>
               <button
+                type="button"
                 onClick={() => exportPointsCsv(getProjectData())}
-                className="w-full text-left px-3.5 py-2 hover:bg-neutral-50 flex items-center space-x-2 text-neutral-700"
+                className="w-full text-left px-3 py-1.5 hover:bg-gray-100 flex items-center gap-2 text-gray-700"
               >
-                <Table className="w-3.5 h-3.5 text-neutral-400" />
+                <Table className="w-3.5 h-3.5 text-gray-400" />
                 <span>Reference Points CSV</span>
               </button>
               <button
+                type="button"
                 onClick={() => exportMeasurementsCsv(getProjectData())}
-                className="w-full text-left px-3.5 py-2 hover:bg-neutral-50 flex items-center space-x-2 text-neutral-700"
+                className="w-full text-left px-3 py-1.5 hover:bg-gray-100 flex items-center gap-2 text-gray-700"
               >
-                <Table className="w-3.5 h-3.5 text-neutral-400" />
+                <Table className="w-3.5 h-3.5 text-gray-400" />
                 <span>Measurements CSV</span>
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Present / Play Button */}
+        <button
+          type="button"
+          onClick={onRunAutoAnalysis}
+          className="w-7 h-7 rounded text-gray-500 hover:bg-gray-100 hover:text-gray-800 flex items-center justify-center transition-colors cursor-pointer"
+          title="Run Computer Vision Auto-Analysis (Present / Play)"
+        >
+          <Play className="w-3.5 h-3.5 fill-current text-gray-600" />
+        </button>
+
+        {/* Zoom Dropdown */}
+        <div className="relative">
+          <button
+            type="button"
+            onClick={() => setShowZoomMenu((prev) => !prev)}
+            className="h-7 px-2 text-gray-700 hover:bg-gray-100 rounded flex items-center gap-1 font-mono text-xs transition-colors cursor-pointer"
+            title="Change zoom level"
+          >
+            <span>{zoomPercent}%</span>
+            <ChevronDown className="w-3 h-3 text-gray-400" />
+          </button>
+
+          {showZoomMenu && (
+            <div
+              className="absolute right-0 top-full mt-1 w-32 bg-white rounded-md shadow-lg border border-[#E5E5E5] py-1 z-50 text-xs font-sans"
+              onClick={() => setShowZoomMenu(false)}
+            >
+              <button
+                type="button"
+                onClick={() => fitToPaper(window.innerWidth - 500, window.innerHeight - 110)}
+                className="w-full text-left px-3 py-1.5 hover:bg-gray-100 flex justify-between text-gray-700"
+              >
+                <span>Fit Paper</span>
+                <span className="font-mono text-[10px] text-gray-400">0</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setCamera({ zoom: 0.5 })}
+                className="w-full text-left px-3 py-1.5 hover:bg-gray-100 text-gray-700"
+              >
+                50%
+              </button>
+              <button
+                type="button"
+                onClick={() => setCamera({ zoom: 1 })}
+                className="w-full text-left px-3 py-1.5 hover:bg-gray-100 flex justify-between text-gray-700"
+              >
+                <span>100%</span>
+                <span className="font-mono text-[10px] text-gray-400">1</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setCamera({ zoom: 2 })}
+                className="w-full text-left px-3 py-1.5 hover:bg-gray-100 text-gray-700"
+              >
+                200%
+              </button>
+              <button
+                type="button"
+                onClick={() => setCamera({ zoom: 4 })}
+                className="w-full text-left px-3 py-1.5 hover:bg-gray-100 text-gray-700"
+              >
+                400%
               </button>
             </div>
           )}

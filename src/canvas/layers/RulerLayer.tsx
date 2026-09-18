@@ -7,10 +7,13 @@ import { approximateFraction } from '../../geometry/rational';
 interface RulerLayerProps {
   rulers: RulerItem[];
   zoom: number;
+  paperWidth?: number;
+  paperHeight?: number;
 }
 
-export const RulerLayer: React.FC<RulerLayerProps> = React.memo(({ rulers, zoom }) => {
-  if (rulers.length === 0) return null;
+export const RulerLayer: React.FC<RulerLayerProps> = React.memo(({ rulers, zoom, paperWidth, paperHeight }) => {
+  const pW = paperWidth || BASE_PAPER_SIZE;
+  const pH = paperHeight || BASE_PAPER_SIZE;
 
   const strokeW = Math.max(0.5, 1 / zoom);
   const fontSize = Math.max(10, 11 / zoom);
@@ -18,8 +21,8 @@ export const RulerLayer: React.FC<RulerLayerProps> = React.memo(({ rulers, zoom 
   return (
     <Group listening={false}>
       {rulers.map((r) => {
-        const wx = r.point.x * BASE_PAPER_SIZE;
-        const wy = r.point.y * BASE_PAPER_SIZE;
+        const wx = r.point.x * pW;
+        const wy = r.point.y * pH;
 
         const fracX = approximateFraction(r.point.x, { maxDenominator: 64 });
         const fracY = approximateFraction(r.point.y, { maxDenominator: 64 });
@@ -33,7 +36,7 @@ export const RulerLayer: React.FC<RulerLayerProps> = React.memo(({ rulers, zoom 
             {showH && (
               <>
                 <Line
-                  points={[-BASE_PAPER_SIZE, wy, BASE_PAPER_SIZE * 2, wy]}
+                  points={[-pW, wy, pW * 2, wy]}
                   stroke="#D97706"
                   strokeWidth={strokeW}
                   dash={[4 / zoom, 4 / zoom]}
@@ -65,7 +68,7 @@ export const RulerLayer: React.FC<RulerLayerProps> = React.memo(({ rulers, zoom 
             {showV && (
               <>
                 <Line
-                  points={[wx, -BASE_PAPER_SIZE, wx, BASE_PAPER_SIZE * 2]}
+                  points={[wx, -pH, wx, pH * 2]}
                   stroke="#D97706"
                   strokeWidth={strokeW}
                   dash={[4 / zoom, 4 / zoom]}

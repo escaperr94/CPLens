@@ -7,7 +7,7 @@ import { createUnitSquareHomography, applyHomography } from '../geometry/homogra
 export function rectifyImage(
   image: HTMLImageElement,
   corners: [Point2D, Point2D, Point2D, Point2D],
-  outputSize: number = 1200
+  outputSize: number = 1600
 ): HTMLCanvasElement {
   const canvas = document.createElement('canvas');
   canvas.width = outputSize;
@@ -60,17 +60,26 @@ export function rectifyImage(
       const normX = x / outputSize;
       const srcPt = applyHomography({ x: normX, y: normY }, toImage);
 
-      const sx = Math.round(srcPt.x);
-      const sy = Math.round(srcPt.y);
+      const x0 = Math.floor(srcPt.x);
+      const y0 = Math.floor(srcPt.y);
+      const x1 = Math.min(srcW - 1, x0 + 1);
+      const y1 = Math.min(srcH - 1, y0 + 1);
+      const fx = srcPt.x - x0;
+      const fy = srcPt.y - y0;
 
       const outIdx = (y * outputSize + x) * 4;
 
-      if (sx >= 0 && sx < srcW && sy >= 0 && sy < srcH) {
-        const srcIdx = (sy * srcW + sx) * 4;
-        outPixels[outIdx] = srcPixels[srcIdx];
-        outPixels[outIdx + 1] = srcPixels[srcIdx + 1];
-        outPixels[outIdx + 2] = srcPixels[srcIdx + 2];
-        outPixels[outIdx + 3] = srcPixels[srcIdx + 3];
+      if (x0 >= 0 && x1 < srcW && y0 >= 0 && y1 < srcH) {
+        const idx00 = (y0 * srcW + x0) * 4;
+        const idx10 = (y0 * srcW + x1) * 4;
+        const idx01 = (y1 * srcW + x0) * 4;
+        const idx11 = (y1 * srcW + x1) * 4;
+
+        for (let c = 0; c < 4; c++) {
+          const top = srcPixels[idx00 + c] * (1 - fx) + srcPixels[idx10 + c] * fx;
+          const bot = srcPixels[idx01 + c] * (1 - fx) + srcPixels[idx11 + c] * fx;
+          outPixels[outIdx + c] = Math.round(top * (1 - fy) + bot * fy);
+        }
       } else {
         outPixels[outIdx] = 255;
         outPixels[outIdx + 1] = 255;

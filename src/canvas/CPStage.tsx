@@ -1,12 +1,15 @@
 import React, { useRef, useEffect, useState, useMemo, useCallback } from 'react';
 import { useShallow } from 'zustand/react/shallow';
-import { Stage, Layer, Image as KonvaImage, Rect, Group } from 'react-konva';
+import { Stage, Layer, Image as KonvaImage, Rect, Group, Circle, Line, Text, Transformer } from 'react-konva';
+import { Sparkles, ArrowLeft, Copy, Square, Crop } from 'lucide-react';
 import Konva from 'konva';
 import { useAppStore } from '../store/projectStore';
+import { CreaseLine, ReferencePoint } from '../store/types';
 import { BASE_PAPER_SIZE, paperToScreen, screenToPaper, paperToWorld, worldToPaper } from './transforms';
 import { findSnapTarget, GeometryScene } from '../geometry/snapping';
 import { findCreaseIntersections } from '../geometry/intersection';
 import { rectifyImage } from './imageRectifier';
+import { IDENTITY_HOMOGRAPHY } from '../geometry/homography';
 import { GridLayer } from './layers/GridLayer';
 import { CreaseLayer } from './layers/CreaseLayer';
 import { IntersectionLayer } from './layers/IntersectionLayer';
@@ -17,20 +20,25 @@ import { SymmetryLayer } from './layers/SymmetryLayer';
 import { CalibrationOverlay } from './layers/CalibrationOverlay';
 import { SnapOverlay } from './layers/SnapOverlay';
 import { Loupe } from './Loupe';
-import { Point2D } from '../geometry/point';
+import { Point2D, distance } from '../geometry/point';
 import { projectPointOntoSegment } from '../geometry/segment';
 
 export const CPStage: React.FC = () => {
   const containerRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<Konva.Stage | null>(null);
-
+  const trRef = useRef<Konva.Transformer | null>(null);
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
   const [htmlImage, setHtmlImage] = useState<HTMLImageElement | null>(null);
   const [rectifiedCanvas, setRectifiedCanvas] = useState<HTMLCanvasElement | null>(null);
   const [isSpacePressed, setIsSpacePressed] = useState(false);
   const [isAltPressed, setIsAltPressed] = useState(false);
   const [isPanning, setIsPanning] = useState(false);
-
+  const [dragCropStart, setDragCropStart] = useState<Point2D | null>(null);
+  const [dragSheetId, setDragSheetId] = useState<string | 'main' | null>(null);
+  const [dragSheetStart, setDragSheetStart] = useState<{ mouseX: number; mouseY: number; initialX: number; initialY: number } | null>(null);
+  const [sheetImages, setSheetImages] = useState<Record<string, HTMLImageElement>>({});
+  const [canvasImgElements, setCanvasImgElements] = useState<Record<string, HTMLImageElement>>({});
+  const [boundaryEditSheetId, setBoundaryEditSheetId] = useState<string | null>(null);
   const panRafRef = useRef<number | null>(null);
   const cursorRafRef = useRef<number | null>(null);
   const lastPanPosRef = useRef<Point2D | null>(null);
@@ -60,6 +68,7 @@ export const CPStage: React.FC = () => {
     snapCandidate,
     snappingEnabled,
     snapOptions,
+    targetPoint,
     loupe,
     calibrationCorners,
     drawingMeasurementStart,
@@ -70,6 +79,7 @@ export const CPStage: React.FC = () => {
     setCursor,
     setSnapCandidate,
     setHoveredPoint,
+    setTargetPoint,
     setCalibrationCorner,
     addPoint,
     updatePoint,
@@ -80,9 +90,38 @@ export const CPStage: React.FC = () => {
     updateMeasurement,
     selectMeasurement,
     addRuler,
+    deletePoint,
+    deleteCrease,
+    deleteMeasurement,
+    deleteRuler,
     setDrawingMeasurementStart,
     setDrawingCreaseStart,
     setCrop,
+    cropBox,
+    setCropBox,
+    sheets,
+    canvasImages,
+    addSheet,
+    extractCPFromImage,
+    activeSheetId,
+    setActiveSheetId,
+    setActiveTool,
+    paperPosition,
+    setPaperPosition,
+    updateSheetPosition,
+    selectedImageId,
+    selectCanvasImage,
+    removeCanvasImage,
+    updateCanvasImagePosition,
+    setReferenceImageFromCropped,
+    addCanvasImage,
+    updateCanvasImage,
+    updateSheet,
+    imageTransform,
+    paperInsets,
+    setPaperInsets,
+    updateSheetInsets,
+    autoTrimBoundary,
   } = useAppStore(useShallow((state) => ({
     image: state.image,
     paper: state.paper,
@@ -106,6 +145,7 @@ export const CPStage: React.FC = () => {
     snapCandidate: state.snapCandidate,
     snappingEnabled: state.snappingEnabled,
     snapOptions: state.snapOptions,
+    targetPoint: state.targetPoint,
     loupe: state.loupe,
     calibrationCorners: state.calibrationCorners,
     drawingMeasurementStart: state.drawingMeasurementStart,
@@ -116,6 +156,7 @@ export const CPStage: React.FC = () => {
     setCursor: state.setCursor,
     setSnapCandidate: state.setSnapCandidate,
     setHoveredPoint: state.setHoveredPoint,
+    setTargetPoint: state.setTargetPoint,
     setCalibrationCorner: state.setCalibrationCorner,
     addPoint: state.addPoint,
     updatePoint: state.updatePoint,
@@ -126,9 +167,38 @@ export const CPStage: React.FC = () => {
     updateMeasurement: state.updateMeasurement,
     selectMeasurement: state.selectMeasurement,
     addRuler: state.addRuler,
+    deletePoint: state.deletePoint,
+    deleteCrease: state.deleteCrease,
+    deleteMeasurement: state.deleteMeasurement,
+    deleteRuler: state.deleteRuler,
     setDrawingMeasurementStart: state.setDrawingMeasurementStart,
     setDrawingCreaseStart: state.setDrawingCreaseStart,
     setCrop: state.setCrop,
+    sheets: state.sheets,
+    canvasImages: state.canvasImages,
+    cropBox: state.cropBox,
+    setCropBox: state.setCropBox,
+    addSheet: state.addSheet,
+    extractCPFromImage: state.extractCPFromImage,
+    activeSheetId: state.activeSheetId,
+    setActiveSheetId: state.setActiveSheetId,
+    setActiveTool: state.setActiveTool,
+    paperPosition: state.paperPosition,
+    setPaperPosition: state.setPaperPosition,
+    updateSheetPosition: state.updateSheetPosition,
+    selectedImageId: state.selectedImageId,
+    selectCanvasImage: state.selectCanvasImage,
+    removeCanvasImage: state.removeCanvasImage,
+    updateCanvasImagePosition: state.updateCanvasImagePosition,
+    setReferenceImageFromCropped: state.setReferenceImageFromCropped,
+    addCanvasImage: state.addCanvasImage,
+    updateCanvasImage: state.updateCanvasImage,
+    updateSheet: state.updateSheet,
+    imageTransform: state.imageTransform,
+    paperInsets: state.paperInsets,
+    setPaperInsets: state.setPaperInsets,
+    updateSheetInsets: state.updateSheetInsets,
+    autoTrimBoundary: state.autoTrimBoundary,
   })));
 
   // Load image object whenever image URL changes
@@ -153,6 +223,212 @@ export const CPStage: React.FC = () => {
       setRectifiedCanvas(null);
     }
   }, [htmlImage, paper.rectified, paper.corners]);
+  // Load images for extracted sheets
+  useEffect(() => {
+    sheets.forEach((s) => {
+      if (s.imageUrl && !sheetImages[s.id]) {
+        const img = new window.Image();
+        img.crossOrigin = 'anonymous';
+        img.src = s.imageUrl;
+        img.onload = () => {
+          setSheetImages((prev) => ({ ...prev, [s.id]: img }));
+        };
+      }
+    });
+  }, [sheets, sheetImages]);
+  // Load images for canvas images
+  useEffect(() => {
+    canvasImages.forEach((imgItem) => {
+      if (imgItem.url && !canvasImgElements[imgItem.id]) {
+        const img = new window.Image();
+        img.crossOrigin = 'anonymous';
+        img.src = imgItem.url;
+        img.onload = () => {
+          setCanvasImgElements((prev) => ({ ...prev, [imgItem.id]: img }));
+        };
+      }
+    });
+  }, [canvasImages, canvasImgElements]);
+  // Attach Konva Transformer to selected canvas image or active secondary sheet
+  useEffect(() => {
+    if (!trRef.current || !stageRef.current) return;
+    if (selectedImageId) {
+      const node = stageRef.current.findOne(`.canvas_img_${selectedImageId}`);
+      if (node) {
+        trRef.current.nodes([node]);
+        trRef.current.getLayer()?.batchDraw();
+        return;
+      }
+    }
+    if (activeSheetId && activeSheetId !== 'main_cp' && activeSheetId !== boundaryEditSheetId) {
+      const node = stageRef.current.findOne(`.canvas_sheet_${activeSheetId}`);
+      if (node) {
+        trRef.current.nodes([node]);
+        trRef.current.getLayer()?.batchDraw();
+        return;
+      }
+    }
+    trRef.current.nodes([]);
+    trRef.current.getLayer()?.batchDraw();
+  }, [selectedImageId, activeSheetId, canvasImages, sheets]);
+
+
+  // Extract cropped pixels from whichever image overlaps the crop box
+  const getCroppedImageInfo = useCallback((): { dataUrl: string; width: number; height: number } | null => {
+    const curBox = useAppStore.getState().cropBox;
+    if (!curBox || curBox.width < 10 || curBox.height < 10) return null;
+
+    // 1. Check canvas images
+    for (const cImg of canvasImages) {
+      const overlapX1 = Math.max(curBox.x, cImg.x);
+      const overlapY1 = Math.max(curBox.y, cImg.y);
+      const overlapX2 = Math.min(curBox.x + curBox.width, cImg.x + cImg.width);
+      const overlapY2 = Math.min(curBox.y + curBox.height, cImg.y + cImg.height);
+
+      if (overlapX2 > overlapX1 && overlapY2 > overlapY1) {
+        const imgElement = canvasImgElements[cImg.id];
+        if (imgElement && imgElement.complete && imgElement.naturalWidth > 0) {
+          const scaleX = imgElement.naturalWidth / cImg.width;
+          const scaleY = imgElement.naturalHeight / cImg.height;
+
+          const sx = Math.max(0, (curBox.x - cImg.x) * scaleX);
+          const sy = Math.max(0, (curBox.y - cImg.y) * scaleY);
+          const sw = Math.min(imgElement.naturalWidth - sx, curBox.width * scaleX);
+          const sh = Math.min(imgElement.naturalHeight - sy, curBox.height * scaleY);
+
+          const outW = Math.round(Math.max(10, sw));
+          const outH = Math.round(Math.max(10, sh));
+
+          const offscreen = document.createElement('canvas');
+          offscreen.width = outW;
+          offscreen.height = outH;
+          const ctx = offscreen.getContext('2d');
+          if (!ctx) return null;
+
+          if (sw > 0 && sh > 0) {
+            ctx.imageSmoothingEnabled = true;
+            ctx.imageSmoothingQuality = 'high';
+            ctx.drawImage(imgElement, sx, sy, sw, sh, 0, 0, outW, outH);
+            return { dataUrl: offscreen.toDataURL('image/png'), width: outW, height: outH };
+          }
+        }
+      }
+    }
+
+    // 2. Check main paper workspace [paperPosition.x, paperPosition.y, paperW, paperH]
+    const paperAspect = paper.aspectRatio || 1;
+    const paperW = BASE_PAPER_SIZE;
+    const paperH = BASE_PAPER_SIZE / paperAspect;
+
+    const overlapPX1 = Math.max(curBox.x, paperPosition.x);
+    const overlapPY1 = Math.max(curBox.y, paperPosition.y);
+    const overlapPX2 = Math.min(curBox.x + curBox.width, paperPosition.x + paperW);
+    const overlapPY2 = Math.min(curBox.y + curBox.height, paperPosition.y + paperH);
+
+    if (overlapPX2 > overlapPX1 && overlapPY2 > overlapPY1) {
+      const sourceCanvasOrImg = rectifiedCanvas || htmlImage;
+      if (sourceCanvasOrImg) {
+        const srcW = sourceCanvasOrImg.width || 1000;
+        const srcH = sourceCanvasOrImg.height || 1000;
+
+        const localX = (curBox.x - paperPosition.x) / paperW;
+        const localY = (curBox.y - paperPosition.y) / paperH;
+        const localW = curBox.width / paperW;
+        const localH = curBox.height / paperH;
+
+        const sx = Math.max(0, localX * srcW);
+        const sy = Math.max(0, localY * srcH);
+        const sw = Math.min(srcW - sx, localW * srcW);
+        const sh = Math.min(srcH - sy, localH * srcH);
+
+        const outW = Math.round(Math.max(10, sw));
+        const outH = Math.round(Math.max(10, sh));
+
+        const offscreen = document.createElement('canvas');
+        offscreen.width = outW;
+        offscreen.height = outH;
+        const ctx = offscreen.getContext('2d');
+        if (!ctx) return null;
+
+        if (sw > 0 && sh > 0) {
+          ctx.imageSmoothingEnabled = true;
+          ctx.imageSmoothingQuality = 'high';
+          ctx.drawImage(sourceCanvasOrImg, sx, sy, sw, sh, 0, 0, outW, outH);
+          return { dataUrl: offscreen.toDataURL('image/png'), width: outW, height: outH };
+        }
+      }
+    }
+
+    // 3. Check sheets
+    for (const s of sheets) {
+      const overlapSX1 = Math.max(curBox.x, s.x);
+      const overlapSY1 = Math.max(curBox.y, s.y);
+      const overlapSX2 = Math.min(curBox.x + curBox.width, s.x + s.width);
+      const overlapSY2 = Math.min(curBox.y + curBox.height, s.y + s.height);
+
+      if (overlapSX2 > overlapSX1 && overlapSY2 > overlapSY1) {
+        const sImg = sheetImages[s.id];
+        if (sImg && sImg.complete && sImg.naturalWidth > 0) {
+          const scaleX = sImg.naturalWidth / s.width;
+          const scaleY = sImg.naturalHeight / s.height;
+
+          const sx = Math.max(0, (curBox.x - s.x) * scaleX);
+          const sy = Math.max(0, (curBox.y - s.y) * scaleY);
+          const sw = Math.min(sImg.naturalWidth - sx, curBox.width * scaleX);
+          const sh = Math.min(sImg.naturalHeight - sy, curBox.height * scaleY);
+
+          const outW = Math.round(Math.max(10, sw));
+          const outH = Math.round(Math.max(10, sh));
+
+          const offscreen = document.createElement('canvas');
+          offscreen.width = outW;
+          offscreen.height = outH;
+          const ctx = offscreen.getContext('2d');
+          if (!ctx) return null;
+
+          if (sw > 0 && sh > 0) {
+            ctx.imageSmoothingEnabled = true;
+            ctx.imageSmoothingQuality = 'high';
+            ctx.drawImage(sImg, sx, sy, sw, sh, 0, 0, outW, outH);
+            return { dataUrl: offscreen.toDataURL('image/png'), width: outW, height: outH };
+          }
+        }
+      }
+    }
+
+    // Fallback: htmlImage
+    if (htmlImage && htmlImage.complete) {
+      const outW = htmlImage.naturalWidth || 1000;
+      const outH = htmlImage.naturalHeight || 1000;
+      const offscreen = document.createElement('canvas');
+      offscreen.width = outW;
+      offscreen.height = outH;
+      const ctx = offscreen.getContext('2d');
+      if (ctx) {
+        ctx.drawImage(htmlImage, 0, 0, outW, outH);
+        return { dataUrl: offscreen.toDataURL('image/png'), width: outW, height: outH };
+      }
+    }
+
+    return null;
+  }, [canvasImages, canvasImgElements, paperPosition, paper.aspectRatio, rectifiedCanvas, htmlImage, sheets, sheetImages]);
+
+  const getCroppedImageDataUrl = useCallback((): string | null => {
+    return getCroppedImageInfo()?.dataUrl ?? null;
+  }, [getCroppedImageInfo]);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (boundaryEditSheetId) {
+        if (e.key === 'Enter' || e.key === 'Escape') {
+          e.preventDefault();
+          setBoundaryEditSheetId(null);
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [boundaryEditSheetId]);
 
   // Handle window resize
   useEffect(() => {
@@ -272,8 +548,78 @@ export const CPStage: React.FC = () => {
     const pointer = stage.getPointerPosition();
     if (!pointer) return;
 
+    const worldX = (pointer.x - camera.panX) / camera.zoom;
+    const worldY = (pointer.y - camera.panY) / camera.zoom;
+
+    // Check if dragging main paper or sheets via frame header
+    if (activeTool === 'select') {
+      if (
+        worldY >= paperPosition.y - 32 &&
+        worldY <= paperPosition.y &&
+        worldX >= paperPosition.x &&
+        worldX <= paperPosition.x + 220
+      ) {
+        setDragSheetId('main');
+        setDragSheetStart({
+          mouseX: worldX,
+          mouseY: worldY,
+          initialX: paperPosition.x,
+          initialY: paperPosition.y,
+        });
+        setActiveSheetId('main_cp');
+        return;
+      }
+
+      for (const s of sheets) {
+        if (
+          worldY >= s.y - 32 &&
+          worldY <= s.y &&
+          worldX >= s.x &&
+          worldX <= s.x + 220
+        ) {
+          setDragSheetId(s.id);
+          setDragSheetStart({
+            mouseX: worldX,
+            mouseY: worldY,
+            initialX: s.x,
+            initialY: s.y,
+          });
+          setActiveSheetId(s.id);
+          return;
+        }
+      }
+    }
+
+    // If Crop Tool is active, start dragging a crop box anywhere on the canvas
+    if (activeTool === 'crop') {
+      const worldX = (pointer.x - camera.panX) / camera.zoom;
+      const worldY = (pointer.y - camera.panY) / camera.zoom;
+      setDragCropStart({ x: worldX, y: worldY });
+      setCropBox({ x: worldX, y: worldY, width: 0, height: 0, active: true });
+      return;
+    }
+
+    // If user clicks on any sheet or paper, switch active sheet
+    let clickedSheetId: string | null = null;
+      for (const s of sheets) {
+        if (worldX >= s.x && worldX <= s.x + s.width && worldY >= s.y && worldY <= s.y + s.height) {
+          clickedSheetId = s.id;
+          break;
+        }
+      }
+      if (!clickedSheetId && worldX >= paperPosition.x && worldX <= paperPosition.x + 1000 && worldY >= paperPosition.y && worldY <= paperPosition.y + 1000) {
+        clickedSheetId = 'main_cp';
+      }
+      if (clickedSheetId && clickedSheetId !== (activeSheetId || 'main_cp')) {
+        setActiveSheetId(clickedSheetId === 'main_cp' ? null : clickedSheetId);
+      }
+
+
+    const curActiveSheet = sheets.find((s) => s.id === (useAppStore.getState().activeSheetId || null));
+    const curOrigin = curActiveSheet ? { x: curActiveSheet.x, y: curActiveSheet.y } : paperPosition;
+
     // Determine target point: snapCandidate if active, else raw cursor
-    const rawPaper = screenToPaper(pointer, camera);
+    const rawPaper = worldToPaper({ x: worldX - curOrigin.x, y: worldY - curOrigin.y });
     const clickSnap = snappingEnabled ? findSnapTarget(rawPaper, geometryScene, { ...snapOptions, zoom: camera.zoom }) : null;
     const targetPaper = clickSnap?.point ?? rawPaper;
 
@@ -296,14 +642,17 @@ export const CPStage: React.FC = () => {
       case 'point': {
         if (clickSnap?.kind === 'reference-point' && clickSnap.sourceId) {
           selectPoint(clickSnap.sourceId);
+          setTargetPoint(clickSnap.point);
           break;
         }
-        addPoint({
+        const newPt = {
           x: targetPaper.x,
           y: targetPaper.y,
           label: `P${points.length + 1}`,
-          color: '#ef4444',
-        });
+          color: '#0D99FF',
+        };
+        addPoint(newPt);
+        setTargetPoint(targetPaper);
         break;
       }
 
@@ -343,7 +692,26 @@ export const CPStage: React.FC = () => {
       }
 
       case 'select': {
-        // Deselect if clicked empty area
+        // Check if user clicked near a reference point
+        const pointTolerance = 14 / (camera.zoom * BASE_PAPER_SIZE);
+        let clickedPointId: string | null = null;
+        for (const p of points) {
+          if (distance(targetPaper, p) < pointTolerance) {
+            clickedPointId = p.id;
+            break;
+          }
+        }
+
+        if (clickedPointId) {
+          selectPoint(clickedPointId);
+          selectCrease(null);
+          selectMeasurement(null);
+          const found = points.find((p) => p.id === clickedPointId);
+          if (found) setTargetPoint({ x: found.x, y: found.y });
+          else setTargetPoint(targetPaper);
+          break;
+        }
+
         // Check if user clicked near a crease (12px radius)
         const clickTolerance = 12 / (camera.zoom * BASE_PAPER_SIZE);
         let closestCreaseId: string | null = null;
@@ -362,10 +730,70 @@ export const CPStage: React.FC = () => {
           selectCrease(closestCreaseId);
           selectPoint(null);
           selectMeasurement(null);
-        } else if (e.target === stage) {
+          setTargetPoint(targetPaper);
+        } else {
+          // User clicked paper: lock target point coordinates!
+          setTargetPoint(targetPaper);
           selectPoint(null);
           selectCrease(null);
           selectMeasurement(null);
+        }
+        break;
+      }
+      case 'eraser': {
+        const pointTolerance = 16 / (camera.zoom * BASE_PAPER_SIZE);
+        const clickTolerance = 14 / (camera.zoom * BASE_PAPER_SIZE);
+
+        // 1. Check points
+        let deleted = false;
+        for (const p of points) {
+          if (distance(targetPaper, p) < pointTolerance) {
+            deletePoint(p.id);
+            deleted = true;
+            break;
+          }
+        }
+        if (deleted) break;
+
+        // 2. Check creases
+        let closestCreaseId: string | null = null;
+        let minCreaseDist = clickTolerance;
+        for (let i = 0; i < creases.length; i++) {
+          const c = creases[i];
+          const proj = projectPointOntoSegment(targetPaper, c.p1, c.p2);
+          if (proj.distance < minCreaseDist) {
+            minCreaseDist = proj.distance;
+            closestCreaseId = c.id;
+          }
+        }
+        if (closestCreaseId) {
+          deleteCrease(closestCreaseId);
+          break;
+        }
+
+        // 3. Check measurements
+        for (const m of measurements) {
+          const proj = projectPointOntoSegment(targetPaper, m.p1, m.p2);
+          if (proj.distance < clickTolerance) {
+            deleteMeasurement(m.id);
+            deleted = true;
+            break;
+          }
+        }
+        if (deleted) break;
+
+        // 4. Check rulers
+        for (const r of rulers) {
+          const dH = Math.abs(targetPaper.y - r.point.y);
+          const dV = Math.abs(targetPaper.x - r.point.x);
+          if ((r.orientation === 'horizontal' || r.orientation === 'both') && dH < clickTolerance) {
+            deleteRuler(r.id);
+            break;
+          }
+          if ((r.orientation === 'vertical' || r.orientation === 'both') && dV < clickTolerance) {
+            deleteRuler(r.id);
+            break;
+          }
         }
         break;
       }
@@ -383,14 +811,54 @@ export const CPStage: React.FC = () => {
       lastPanPosRef.current = { x: e.evt.clientX, y: e.evt.clientY };
       return;
     }
-
     const stage = stageRef.current;
     if (!stage) return;
     const pointer = stage.getPointerPosition();
     if (!pointer) return;
 
-    const paperPos = screenToPaper(pointer, camera);
+    if (dragSheetId && dragSheetStart) {
+      const worldX = (pointer.x - camera.panX) / camera.zoom;
+      const worldY = (pointer.y - camera.panY) / camera.zoom;
+      const dx = worldX - dragSheetStart.mouseX;
+      const dy = worldY - dragSheetStart.mouseY;
+      if (dragSheetId === 'main') {
+        setPaperPosition({
+          x: Math.round(dragSheetStart.initialX + dx),
+          y: Math.round(dragSheetStart.initialY + dy),
+        });
+      } else {
+        updateSheetPosition(
+          dragSheetId,
+          Math.round(dragSheetStart.initialX + dx),
+          Math.round(dragSheetStart.initialY + dy)
+        );
+      }
+      return;
+    }
+    const curActiveSheet = sheets.find((s) => s.id === (activeSheetId || null));
+    const curOrigin = curActiveSheet ? { x: curActiveSheet.x, y: curActiveSheet.y } : paperPosition;
+    const paperPos = worldToPaper({
+      x: (pointer.x - camera.panX) / camera.zoom - curOrigin.x,
+      y: (pointer.y - camera.panY) / camera.zoom - curOrigin.y,
+    });
     pendingCursorRef.current = { paper: paperPos, screen: pointer };
+
+    if (activeTool === 'crop' && dragCropStart) {
+      const worldX = (pointer.x - camera.panX) / camera.zoom;
+      const worldY = (pointer.y - camera.panY) / camera.zoom;
+      let width = Math.abs(worldX - dragCropStart.x);
+      let height = Math.abs(worldY - dragCropStart.y);
+      const isShift = (e.evt as MouseEvent).shiftKey;
+      if (isShift) {
+        const side = Math.max(width, height);
+        width = side;
+        height = side;
+      }
+      const x = worldX < dragCropStart.x ? dragCropStart.x - width : dragCropStart.x;
+      const y = worldY < dragCropStart.y ? dragCropStart.y - height : dragCropStart.y;
+      setCropBox({ x, y, width, height, active: true });
+      return;
+    }
 
     if (!cursorRafRef.current) {
       cursorRafRef.current = requestAnimationFrame(() => {
@@ -424,6 +892,21 @@ export const CPStage: React.FC = () => {
         panRafRef.current = null;
       }
     }
+    if (activeTool === 'crop' && dragCropStart) {
+      setDragCropStart(null);
+      const cur = useAppStore.getState().cropBox;
+      if (cur && (cur.width < 15 || cur.height < 15)) {
+        setCropBox(null);
+      }
+      return;
+    }
+    if (dragSheetId) {
+      setDragSheetId(null);
+      setDragSheetStart(null);
+      return;
+    }
+
+
 
     // A measurement can be made with a single Figma-like drag. Click-click
     // remains supported through the mouse-down branch above.
@@ -449,13 +932,14 @@ export const CPStage: React.FC = () => {
   // Cursor style
   let cursorStyle = 'default';
   if (isSpacePressed || activeTool === 'pan') cursorStyle = isPanning ? 'grabbing' : 'grab';
-  else if (activeTool === 'point' || activeTool === 'measure' || activeTool === 'line' || activeTool === 'ruler')
+  else if (activeTool === 'eraser') cursorStyle = 'pointer';
+  else if (activeTool === 'crop' || activeTool === 'point' || activeTool === 'measure' || activeTool === 'line' || activeTool === 'ruler')
     cursorStyle = 'crosshair';
 
   return (
     <div
       ref={containerRef}
-      className="relative w-full h-full bg-[#F4F5F7] select-none overflow-hidden"
+      className="relative w-full h-full bg-[#F7F7F7] select-none overflow-hidden"
       style={{ cursor: cursorStyle }}
       onContextMenu={(e) => e.preventDefault()}
     >
@@ -480,80 +964,144 @@ export const CPStage: React.FC = () => {
           listening={false}
           imageSmoothingEnabled={!camera.pixelated}
         >
-          {/* Subtle Outer Blue Selection Outline (matching media_1789408992098.png) */}
-          <Rect
-            x={-3 / camera.zoom}
-            y={-3 / camera.zoom}
-            width={BASE_PAPER_SIZE + 6 / camera.zoom}
-            height={BASE_PAPER_SIZE + 6 / camera.zoom}
-            stroke="#0D99FF"
-            strokeWidth={1.5 / camera.zoom}
-            cornerRadius={4 / camera.zoom}
+
+          {/* Main Paper Figma Frame Title Header */}
+          <Group
+            x={paperPosition.x}
+            y={paperPosition.y - 24 / camera.zoom}
             listening={false}
-          />
-
-          {/* Paper Background Area [0, 0, BASE_PAPER_SIZE, BASE_PAPER_SIZE] */}
-          <Rect
-            x={0}
-            y={0}
-            width={BASE_PAPER_SIZE}
-            height={BASE_PAPER_SIZE}
-            fill="#ffffff"
-            stroke={layers.boundary ? '#18181B' : '#E5E5E5'}
-            strokeWidth={layers.boundary ? 1.5 / camera.zoom : 1 / camera.zoom}
-            shadowColor="rgba(0, 0, 0, 0.06)"
-            shadowBlur={20 / camera.zoom}
-            shadowOffsetY={4 / camera.zoom}
-            listening={false}
-          />
-
-          {/* Raster Image (hidden in pure Vector CP mode, transparent in overlay) */}
-          {layers.image && htmlImage && viewMode !== 'vector' && (
-            <>
-              {paper.rectified && rectifiedCanvas ? (
-                // Rectified Square Image
-                <KonvaImage
-                  image={rectifiedCanvas}
-                  x={0}
-                  y={0}
-                  width={BASE_PAPER_SIZE}
-                  height={BASE_PAPER_SIZE}
-                  opacity={viewMode === 'image' ? 1.0 : imageOpacity}
-                  listening={false}
-                />
-              ) : (
-                // Unrectified Source Image
-                <KonvaImage
-                  image={htmlImage}
-                  x={0}
-                  y={0}
-                  width={BASE_PAPER_SIZE}
-                  height={BASE_PAPER_SIZE / (paper.aspectRatio || 1)}
-                  opacity={viewMode === 'image' ? 1.0 : imageOpacity}
-                  listening={false}
-                />
-              )}
-            </>
-          )}
-
-          {/* Layer 2: Grid */}
-          {layers.grid && <GridLayer config={grid} zoom={camera.zoom} />}
-
-          {/* Layer 3: Crease Lines */}
-          {/* Layer 3: Crease Lines (batched by color) */}
-          {layers.creases && viewMode !== 'image' && (
-            <CreaseLayer
-              creases={creases}
-              selectedId={selectedCreaseId}
-              zoom={camera.zoom}
-              onSelectCrease={selectCrease}
+          >
+            <Rect
+              x={0}
+              y={0}
+              width={160 / camera.zoom}
+              height={20 / camera.zoom}
+              fill="rgba(255, 255, 255, 0.95)"
+              stroke={activeSheetId === 'main_cp' || activeSheetId === null ? '#0D99FF' : '#E5E5E5'}
+              strokeWidth={1 / camera.zoom}
+              cornerRadius={4 / camera.zoom}
             />
-          )}
+            <Text
+              x={6 / camera.zoom}
+              y={4 / camera.zoom}
+              text={image.fileName || 'CP.png'}
+              fontSize={11 / camera.zoom}
+              fontFamily="sans-serif"
+              fontStyle="bold"
+              fill={activeSheetId === 'main_cp' || activeSheetId === null ? '#0D99FF' : '#111827'}
+            />
+            <Text
+              x={((image.fileName || 'CP.png').length * 7 + 10) / camera.zoom}
+              y={5 / camera.zoom}
+            text={(() => {
+              const paperAspect = paper.aspectRatio || 1;
+              const insets = paperInsets || { top: 0, right: 0, bottom: 0, left: 0 };
+              const w = Math.round(BASE_PAPER_SIZE - insets.left - insets.right);
+              const h = Math.round((BASE_PAPER_SIZE / paperAspect) - insets.top - insets.bottom);
+              return `${w}×${h}`;
+            })()}
+              fontSize={9 / camera.zoom}
+              fontFamily="monospace"
+              fill="#9CA3AF"
+            />
+          </Group>
 
-          {/* Layer 4: Intersections */}
-          {layers.intersections && viewMode !== 'image' && (
-            <IntersectionLayer creases={creases} zoom={camera.zoom} />
-          )}
+          {/* Main Paper Workspace Group */}
+          <Group x={paperPosition.x} y={paperPosition.y}>
+          {(() => {
+            const paperAspect = paper.aspectRatio || 1;
+            const paperW = BASE_PAPER_SIZE;
+            const paperH = BASE_PAPER_SIZE / paperAspect;
+            const insets = paperInsets || { top: 0, right: 0, bottom: 0, left: 0 };
+            const frameX = insets.left;
+            const frameY = insets.top;
+            const frameW = Math.max(20, paperW - insets.left - insets.right);
+            const frameH = Math.max(20, paperH - insets.top - insets.bottom);
+            return (
+              <>
+                {/* Paper Background Area */}
+                <Rect
+                  x={frameX}
+                  y={frameY}
+                  width={frameW}
+                  height={frameH}
+                  fill="#ffffff"
+                  stroke={layers.boundary ? '#111111' : '#E5E5E5'}
+                  strokeWidth={1 / camera.zoom}
+                  shadowColor="rgba(0, 0, 0, 0.06)"
+                  shadowBlur={20 / camera.zoom}
+                  shadowOffsetY={4 / camera.zoom}
+                  listening={false}
+                />
+
+                {/* Raster Image with imageTransform & clipping */}
+                {layers.image && (
+                  <Group clipX={frameX} clipY={frameY} clipWidth={frameW} clipHeight={frameH}>
+                    {(() => {
+                      const curTransform = (activeSheetId === null || activeSheetId === 'main_cp')
+                        ? imageTransform
+                        : { scale: 1, offsetX: 0, offsetY: 0 };
+                      const scaledW = paperW * curTransform.scale;
+                      const scaledH = paperH * curTransform.scale;
+                      const imgX = curTransform.offsetX - (paperW * (curTransform.scale - 1)) / 2;
+                      const imgY = curTransform.offsetY - (paperH * (curTransform.scale - 1)) / 2;
+
+                      return (
+                        <>
+                          {paper.rectified && rectifiedCanvas ? (
+                            <KonvaImage
+                              image={rectifiedCanvas}
+                              x={imgX}
+                              y={imgY}
+                              width={scaledW}
+                              height={scaledH}
+                              opacity={imageOpacity}
+                              listening={false}
+                            />
+                          ) : htmlImage ? (
+                            <KonvaImage
+                              image={htmlImage}
+                              x={imgX}
+                              y={imgY}
+                              width={scaledW}
+                              height={scaledH}
+                              opacity={imageOpacity}
+                              listening={false}
+                            />
+                          ) : null}
+                        </>
+                      );
+                    })()}
+                  </Group>
+                )}
+
+                {/* Layer 2: Grid on main paper (when main paper is active) */}
+                {layers.grid && (activeSheetId === null || activeSheetId === 'main_cp') && (
+                  <Group x={frameX} y={frameY}>
+                    <GridLayer config={grid} zoom={camera.zoom} paperWidth={frameW} paperHeight={frameH} />
+                  </Group>
+                )}
+
+                {/* Layer 3: Crease Lines on main paper */}
+                {layers.creases && viewMode !== 'image' && (activeSheetId === null || activeSheetId === 'main_cp') && (
+                  <Group x={frameX} y={frameY}>
+                    <CreaseLayer
+                      creases={creases}
+                      selectedId={selectedCreaseId}
+                      zoom={camera.zoom}
+                      onSelectCrease={selectCrease}
+                      paperWidth={frameW}
+                      paperHeight={frameH}
+                    />
+                  </Group>
+                )}
+
+                {/* Layer 4: Intersections */}
+                {layers.intersections && viewMode !== 'image' && (
+                  <Group x={frameX} y={frameY}>
+                    <IntersectionLayer creases={creases} zoom={camera.zoom} paperWidth={frameW} paperHeight={frameH} />
+                  </Group>
+                )}
 
           {/* Layer 5: Symmetry */}
           {layers.symmetry && (
@@ -563,63 +1111,142 @@ export const CPStage: React.FC = () => {
               points={points}
               zoom={camera.zoom}
             />
-          )}
+                )}
+              </>
+            );
+          })()}
+          </Group>
         </Layer>
 
         {/* Layer 2: Interactive Dynamic Overlay Layer */}
+        {/* Layer 2: Interactive Dynamic Overlay Layer anchored to active sheet */}
         <Layer
           x={camera.panX}
           y={camera.panY}
           scaleX={camera.zoom}
           scaleY={camera.zoom}
         >
-          {/* Intermediate line drawing preview */}
-          {drawingCreaseStart && cursorPaper && viewMode !== 'image' && (
-            <CreaseLayer
-              creases={[
-                {
-                  id: 'temp_crease',
-                  p1: drawingCreaseStart,
-                  p2: snappingEnabled && snapCandidate ? snapCandidate.point : cursorPaper,
-                  type: creaseType,
-                  confirmed: false,
-                },
-              ]}
-              selectedId={null}
-              zoom={camera.zoom}
-              onSelectCrease={() => { }}
-            />
+          {(() => {
+            const activeSheet = sheets.find((s) => s.id === (activeSheetId || null));
+            const curOrigin = activeSheet ? { x: activeSheet.x, y: activeSheet.y } : paperPosition;
+            const paperAspect = paper.aspectRatio || 1;
+            const curPaperW = activeSheet ? activeSheet.width : BASE_PAPER_SIZE;
+            const curPaperH = activeSheet ? activeSheet.height : (BASE_PAPER_SIZE / paperAspect);
+
+            return (
+              <Group x={curOrigin.x} y={curOrigin.y}>
+                {/* Intermediate line drawing preview */}
+                {drawingCreaseStart && cursorPaper && viewMode !== 'image' && (
+                  <CreaseLayer
+                    creases={[
+                      {
+                        id: 'temp_crease',
+                        p1: drawingCreaseStart,
+                        p2: snappingEnabled && snapCandidate ? snapCandidate.point : cursorPaper,
+                        type: creaseType,
+                        confirmed: false,
+                      },
+                    ]}
+                    selectedId={null}
+                    zoom={camera.zoom}
+                    onSelectCrease={() => { }}
+                    paperWidth={curPaperW}
+                    paperHeight={curPaperH}
+                  />
+                )}
+
+                {/* Layer 6: Rulers */}
+                {layers.rulers && <RulerLayer rulers={rulers} zoom={camera.zoom} paperWidth={curPaperW} paperHeight={curPaperH} />}
+
+                {/* Layer 7: Measurements */}
+                {layers.measurements && (
+                  <MeasurementLayer
+                    measurements={measurements}
+                    drawingStart={drawingMeasurementStart}
+                    cursor={snappingEnabled && snapCandidate ? snapCandidate.point : cursorPaper}
+                    selectedId={selectedMeasurementId}
+                    zoom={camera.zoom}
+                    onSelect={selectMeasurement}
+                    onMoveMeasurement={moveMeasurement}
+                    paperWidth={curPaperW}
+                    paperHeight={curPaperH}
+                  />
+                )}
+
+                {/* Layer 8: Reference Points */}
+                {layers.points && (
+                  <PointLayer
+                    points={points}
+                    selectedId={selectedPointId}
+                    zoom={camera.zoom}
+                    draggable={activeTool === 'select'}
+                    onSelectPoint={selectPoint}
+                    onMovePoint={movePoint}
+                    onHoverPoint={setHoveredPoint}
+                    paperWidth={curPaperW}
+                    paperHeight={curPaperH}
+                  />
+                )}
+          {/* Locked Canvas Target Reticle */}
+          {targetPoint && (
+            <Group
+              x={targetPoint.x * BASE_PAPER_SIZE}
+              y={targetPoint.y * BASE_PAPER_SIZE}
+              listening={false}
+            >
+              <Line
+                points={[-14 / camera.zoom, 0, 14 / camera.zoom, 0]}
+                stroke="#4F6BA6"
+                strokeWidth={1.2 / camera.zoom}
+                dash={[3 / camera.zoom, 2 / camera.zoom]}
+              />
+              <Line
+                points={[0, -14 / camera.zoom, 0, 14 / camera.zoom]}
+                stroke="#4F6BA6"
+                strokeWidth={1.2 / camera.zoom}
+                dash={[3 / camera.zoom, 2 / camera.zoom]}
+              />
+              <Circle
+                radius={7 / camera.zoom}
+                stroke="#4F6BA6"
+                strokeWidth={1.5 / camera.zoom}
+                fill="#E1E8F5"
+                opacity={0.8}
+              />
+              <Circle
+                radius={2.5 / camera.zoom}
+                fill="#4F6BA6"
+              />
+            </Group>
           )}
-
-          {/* Layer 4: Intersections */}
-
-          {/* Layer 6: Rulers */}
-          {layers.rulers && <RulerLayer rulers={rulers} zoom={camera.zoom} />}
-
-          {/* Layer 7: Measurements */}
-          {layers.measurements && (
-            <MeasurementLayer
-              measurements={measurements}
-              drawingStart={drawingMeasurementStart}
-              cursor={snappingEnabled && snapCandidate ? snapCandidate.point : cursorPaper}
-              selectedId={selectedMeasurementId}
-              zoom={camera.zoom}
-              onSelect={selectMeasurement}
-              onMoveMeasurement={moveMeasurement}
-            />
-          )}
-
-          {/* Layer 8: Reference Points */}
-          {layers.points && (
-            <PointLayer
-              points={points}
-              selectedId={selectedPointId}
-              zoom={camera.zoom}
-              draggable={activeTool === 'select'}
-              onSelectPoint={selectPoint}
-              onMovePoint={movePoint}
-              onHoverPoint={setHoveredPoint}
-            />
+          {/* Live Cursor Coordinate HUD */}
+          {cursorPaper && cursorPaper.x >= 0 && cursorPaper.x <= 1 && cursorPaper.y >= 0 && cursorPaper.y <= 1 && (activeTool === 'point' || activeTool === 'ruler' || activeTool === 'measure') && (
+            <Group
+              x={cursorPaper.x * BASE_PAPER_SIZE}
+              y={cursorPaper.y * BASE_PAPER_SIZE}
+              listening={false}
+            >
+              <Circle
+                radius={3 / camera.zoom}
+                fill="#0D99FF"
+              />
+              <Rect
+                x={8 / camera.zoom}
+                y={-18 / camera.zoom}
+                width={86 / camera.zoom}
+                height={16 / camera.zoom}
+                fill="rgba(17, 24, 39, 0.88)"
+                cornerRadius={3 / camera.zoom}
+              />
+              <Text
+                x={12 / camera.zoom}
+                y={-14 / camera.zoom}
+                text={`${cursorPaper.x.toFixed(4)}, ${cursorPaper.y.toFixed(4)}`}
+                fontSize={9 / camera.zoom}
+                fontFamily="monospace"
+                fill="#FFFFFF"
+              />
+            </Group>
           )}
 
           {/* Layer 9: Calibration & Crop Overlays */}
@@ -639,8 +1266,905 @@ export const CPStage: React.FC = () => {
 
           {/* Layer 10: Snap indicator */}
           <SnapOverlay snap={snapCandidate} zoom={camera.zoom} gridConfig={grid} />
+          </Group>
+        );
+      })()}
+          {/* Active Crop Box on Canvas */}
+          {cropBox && cropBox.active && (
+            <Group listening={false}>
+              <Rect
+                x={cropBox.x}
+                y={cropBox.y}
+                width={cropBox.width}
+                height={cropBox.height}
+                fill="rgba(13, 153, 255, 0.08)"
+                stroke="#0D99FF"
+                strokeWidth={1.5 / camera.zoom}
+                dash={[4 / camera.zoom, 4 / camera.zoom]}
+              />
+              <Text
+                x={cropBox.x + 4 / camera.zoom}
+                y={cropBox.y - 14 / camera.zoom}
+                text={`${Math.round(cropBox.width)} × ${Math.round(cropBox.height)}`}
+                fontSize={10 / camera.zoom}
+                fontFamily="monospace"
+                fill="#0D99FF"
+              />
+            </Group>
+          )}
+          {/* Canvas Images (Pasted/Imported Images on Canvas) */}
+          {canvasImages.map((cImg) => {
+            const isSelected = selectedImageId === cImg.id;
+            const imgElement = canvasImgElements[cImg.id];
+            return (
+              <Group
+                key={cImg.id}
+                name={`canvas_img_${cImg.id}`}
+                x={cImg.x}
+                y={cImg.y}
+                draggable={activeTool === 'select'}
+                onDragStart={() => {
+                  selectCanvasImage(cImg.id);
+                  setActiveSheetId(null);
+                }}
+                onDragEnd={(e) => {
+                  updateCanvasImage(cImg.id, {
+                    x: Math.round(e.target.x()),
+                    y: Math.round(e.target.y()),
+                  });
+                }}
+                onTransformEnd={(e) => {
+                  const node = e.target;
+                  const scale = Math.max(node.scaleX(), node.scaleY());
+                  node.scaleX(1);
+                  node.scaleY(1);
+                  const ratio = cImg.width / (cImg.height || 1);
+                  const newW = Math.max(30, Math.round(cImg.width * scale));
+                  const newH = Math.max(30, Math.round(newW / ratio));
+                  const newX = Math.round(node.x());
+                  const newY = Math.round(node.y());
+                  updateCanvasImage(cImg.id, {
+                    width: newW,
+                    height: newH,
+                    x: newX,
+                    y: newY,
+                  });
+                }}
+                onClick={(e) => {
+                  e.cancelBubble = true;
+                  selectCanvasImage(cImg.id);
+                  setActiveSheetId(null);
+                }}
+                onTap={(e) => {
+                  e.cancelBubble = true;
+                  selectCanvasImage(cImg.id);
+                  setActiveSheetId(null);
+                }}
+              >
+                {/* Image card background */}
+                <Rect
+                  x={0}
+                  y={0}
+                  width={cImg.width}
+                  height={cImg.height}
+                  fill="#ffffff"
+                  stroke={isSelected ? '#0D99FF' : '#E5E5E5'}
+                  strokeWidth={(isSelected ? 2 : 1) / camera.zoom}
+                  shadowColor="rgba(0, 0, 0, 0.08)"
+                  shadowBlur={16 / camera.zoom}
+                  shadowOffsetY={3 / camera.zoom}
+                />
+                {imgElement && (
+                  <KonvaImage
+                    image={imgElement}
+                    x={0}
+                    y={0}
+                    width={cImg.width}
+                    height={cImg.height}
+                    listening={false}
+                  />
+                )}
+                {/* Header title badge */}
+                <Group x={0} y={-22 / camera.zoom} listening={false}>
+                  <Rect
+                    x={0}
+                    y={0}
+                    width={Math.max(140, Math.min(220, cImg.name.length * 7 + 60)) / camera.zoom}
+                    height={18 / camera.zoom}
+                    fill="rgba(255, 255, 255, 0.96)"
+                    stroke={isSelected ? '#0D99FF' : '#E5E5E5'}
+                    strokeWidth={1 / camera.zoom}
+                    cornerRadius={4 / camera.zoom}
+                  />
+                  <Text
+                    x={6 / camera.zoom}
+                    y={3 / camera.zoom}
+                    text={cImg.name}
+                    fontSize={10 / camera.zoom}
+                    fontFamily="sans-serif"
+                    fontStyle="bold"
+                    fill={isSelected ? '#0D99FF' : '#111827'}
+                  />
+                  <Text
+                    x={(Math.min(cImg.name.length * 6, 120) + 12) / camera.zoom}
+                    y={4 / camera.zoom}
+                    text={`${Math.round(cImg.width)}×${Math.round(cImg.height)}`}
+                    fontSize={8 / camera.zoom}
+                    fontFamily="monospace"
+                    fill="#9CA3AF"
+                  />
+                </Group>
+                {/* Selection border indicator */}
+                {isSelected && (
+                  <Rect
+                    x={-2 / camera.zoom}
+                    y={-2 / camera.zoom}
+                    width={(cImg.width + 4) / camera.zoom}
+                    height={(cImg.height + 4) / camera.zoom}
+                    stroke="#0D99FF"
+                    strokeWidth={1.5 / camera.zoom}
+                    dash={[4 / camera.zoom, 3 / camera.zoom]}
+                    listening={false}
+                  />
+                )}
+              </Group>
+            );
+          })}
+
+
+          {/* Multiple CP Sheets on Canvas */}
+          {sheets.map((s, idx) => {
+            const isSelected = activeSheetId === s.id;
+            const sheetImg = sheetImages[s.id];
+            return (
+              <Group
+                key={s.id}
+                name={`canvas_sheet_${s.id}`}
+                x={s.x}
+                y={s.y}
+                draggable={activeTool === 'select'}
+                onDragStart={() => {
+                  setActiveSheetId(s.id);
+                  selectCanvasImage(null);
+                }}
+                onDragEnd={(e) => {
+                  updateSheetPosition(s.id, Math.round(e.target.x()), Math.round(e.target.y()));
+                }}
+                onTransformEnd={(e) => {
+                  const node = e.target;
+                  const scaleX = node.scaleX();
+                  const scaleY = node.scaleY();
+                  node.scaleX(1);
+                  node.scaleY(1);
+                  const newW = Math.max(100, Math.round(s.width * scaleX));
+                  const newH = Math.max(100, Math.round(s.height * scaleY));
+                  const newX = Math.round(node.x());
+                  const newY = Math.round(node.y());
+                  updateSheet(s.id, {
+                    width: newW,
+                    height: newH,
+                    x: newX,
+                    y: newY,
+                  });
+                }}
+                onClick={(e) => {
+                  e.cancelBubble = true;
+                  setActiveSheetId(s.id);
+                  selectCanvasImage(null);
+                }}
+                onTap={(e) => {
+                  e.cancelBubble = true;
+                  setActiveSheetId(s.id);
+                  selectCanvasImage(null);
+                }}
+                onDblClick={(e) => {
+                  e.cancelBubble = true;
+                  setBoundaryEditSheetId(s.id);
+                }}
+              >
+                {(() => {
+                  const isEditingBoundary = boundaryEditSheetId === s.id;
+                  const insets = s.insets || { top: 0, right: 0, bottom: 0, left: 0 };
+                  const frameX = insets.left;
+                  const frameY = insets.top;
+                  const frameW = Math.max(20, s.width - insets.left - insets.right);
+                  const frameH = Math.max(20, s.height - insets.top - insets.bottom);
+
+                  return (
+                    <>
+                      {/* Paper Rect with insets */}
+                      <Rect
+                        x={frameX}
+                        y={frameY}
+                        width={frameW}
+                        height={frameH}
+                        fill="#ffffff"
+                        stroke={isSelected ? '#0D99FF' : '#111111'}
+                        strokeWidth={(isSelected ? 2 : 1) / camera.zoom}
+                        shadowColor="rgba(0, 0, 0, 0.08)"
+                        shadowBlur={16 / camera.zoom}
+                        shadowOffsetY={3 / camera.zoom}
+                      />
+
+                      {/* Render Cropped Image with transform & clipping to insets */}
+                      {sheetImg && (isSelected ? layers.image : true) && (
+                        <Group clipX={frameX} clipY={frameY} clipWidth={frameW} clipHeight={frameH}>
+                           {(() => {
+                             const sTransform = isSelected
+                               ? imageTransform
+                               : (s.transform || { scale: 1, offsetX: 0, offsetY: 0 });
+                             const scaledW = s.width * sTransform.scale;
+                             const scaledH = s.height * sTransform.scale;
+                             const imgX = sTransform.offsetX - (s.width * (sTransform.scale - 1)) / 2;
+                             const imgY = sTransform.offsetY - (s.height * (sTransform.scale - 1)) / 2;
+                             return (
+                               <KonvaImage
+                                 image={sheetImg}
+                                 x={imgX}
+                                 y={imgY}
+                                 width={scaledW}
+                                 height={scaledH}
+                                 opacity={0.92}
+                                 listening={false}
+                               />
+                             );
+                           })()}
+                        </Group>
+                      )}
+
+                      {/* Layer 2: Grid on this sheet aligned to insets */}
+                      {((isSelected && layers.grid && grid.enabled) || (!isSelected && s.grid && s.grid.enabled)) && (
+                        <Group x={frameX} y={frameY}>
+                          <GridLayer
+                            config={isSelected ? grid : s.grid}
+                            zoom={camera.zoom}
+                            paperWidth={frameW}
+                            paperHeight={frameH}
+                          />
+                        </Group>
+                      )}
+
+                      {/* Layer 3: Creases on this sheet aligned to insets */}
+                      <Group x={frameX} y={frameY}>
+                        {isSelected ? (
+                          layers.creases && viewMode !== 'image' && (
+                            <CreaseLayer
+                              creases={creases}
+                              selectedId={selectedCreaseId}
+                              zoom={camera.zoom}
+                              onSelectCrease={selectCrease}
+                              paperWidth={frameW}
+                              paperHeight={frameH}
+                            />
+                          )
+                        ) : (
+                          s.creases.length > 0 && (
+                            <CreaseLayer
+                              creases={s.creases}
+                              selectedId={null}
+                              zoom={camera.zoom}
+                              onSelectCrease={() => {}}
+                              paperWidth={frameW}
+                              paperHeight={frameH}
+                            />
+                          )
+                        )}
+
+                        {/* Points on this sheet */}
+                        {!isSelected && s.points && s.points.length > 0 && layers.points && (
+                          <PointLayer
+                            points={s.points}
+                            selectedId={null}
+                            zoom={camera.zoom}
+                            draggable={false}
+                            onSelectPoint={() => {}}
+                            onMovePoint={() => {}}
+                            onHoverPoint={() => {}}
+                            paperWidth={frameW}
+                            paperHeight={frameH}
+                          />
+                        )}
+                      </Group>
+
+                      {/* Dimmed Margins Outside Frame during boundary edit */}
+                      {isEditingBoundary && (
+                        <Group listening={false}>
+                          {frameY > 0 && (
+                            <Rect x={0} y={0} width={s.width} height={frameY} fill="rgba(0, 0, 0, 0.45)" />
+                          )}
+                          {frameY + frameH < s.height && (
+                            <Rect x={0} y={frameY + frameH} width={s.width} height={s.height - frameY - frameH} fill="rgba(0, 0, 0, 0.45)" />
+                          )}
+                          {frameX > 0 && (
+                            <Rect x={0} y={frameY} width={frameX} height={frameH} fill="rgba(0, 0, 0, 0.45)" />
+                          )}
+                          {frameX + frameW < s.width && (
+                            <Rect x={frameX + frameW} y={frameY} width={s.width - frameX - frameW} height={frameH} fill="rgba(0, 0, 0, 0.45)" />
+                          )}
+                          {/* Active Frame Outline */}
+                          <Rect
+                            x={frameX}
+                            y={frameY}
+                            width={frameW}
+                            height={frameH}
+                            stroke="#0D99FF"
+                            strokeWidth={2 / camera.zoom}
+                            dash={[6 / camera.zoom, 3 / camera.zoom]}
+                          />
+                        </Group>
+                      )}
+
+                      {/* Interactive Boundary Edge Trim Handles & L-Brackets when selected or editing */}
+                      {(isSelected || isEditingBoundary) && (
+                        <Group>
+                          {/* Top-Left Corner L-Bracket Handle */}
+                          <Line
+                            points={[
+                              frameX, frameY + 12 / camera.zoom,
+                              frameX, frameY,
+                              frameX + 12 / camera.zoom, frameY
+                            ]}
+                            stroke="#0D99FF"
+                            strokeWidth={3 / camera.zoom}
+                            lineCap="square"
+                          />
+                          <Circle
+                            x={frameX}
+                            y={frameY}
+                            radius={8 / camera.zoom}
+                            fill="#FFFFFF"
+                            stroke="#0D99FF"
+                            strokeWidth={2 / camera.zoom}
+                            draggable={true}
+                            onDragStart={() => useAppStore.getState().pushHistory()}
+                            onDragMove={(e) => {
+                              const localX = (e.target.x() - camera.panX) / camera.zoom - s.x;
+                              const localY = (e.target.y() - camera.panY) / camera.zoom - s.y;
+                              const newLeft = Math.max(0, Math.min(s.width - insets.right - 20, Math.round(localX)));
+                              const newTop = Math.max(0, Math.min(s.height - insets.bottom - 20, Math.round(localY)));
+                              updateSheetInsets(s.id, { left: newLeft, top: newTop });
+                            }}
+                            onMouseEnter={(e) => { e.target.getStage()!.container().style.cursor = 'nwse-resize'; }}
+                            onMouseLeave={(e) => { e.target.getStage()!.container().style.cursor = 'default'; }}
+                          />
+
+                          {/* Top-Right Corner L-Bracket Handle */}
+                          <Line
+                            points={[
+                              frameX + frameW - 12 / camera.zoom, frameY,
+                              frameX + frameW, frameY,
+                              frameX + frameW, frameY + 12 / camera.zoom
+                            ]}
+                            stroke="#0D99FF"
+                            strokeWidth={3 / camera.zoom}
+                            lineCap="square"
+                          />
+                          <Circle
+                            x={frameX + frameW}
+                            y={frameY}
+                            radius={8 / camera.zoom}
+                            fill="#FFFFFF"
+                            stroke="#0D99FF"
+                            strokeWidth={2 / camera.zoom}
+                            draggable={true}
+                            onDragStart={() => useAppStore.getState().pushHistory()}
+                            onDragMove={(e) => {
+                              const localX = (e.target.x() - camera.panX) / camera.zoom - s.x;
+                              const localY = (e.target.y() - camera.panY) / camera.zoom - s.y;
+                              const newRight = Math.max(0, Math.min(s.width - insets.left - 20, Math.round(s.width - localX)));
+                              const newTop = Math.max(0, Math.min(s.height - insets.bottom - 20, Math.round(localY)));
+                              updateSheetInsets(s.id, { right: newRight, top: newTop });
+                            }}
+                            onMouseEnter={(e) => { e.target.getStage()!.container().style.cursor = 'nesw-resize'; }}
+                            onMouseLeave={(e) => { e.target.getStage()!.container().style.cursor = 'default'; }}
+                          />
+
+                          {/* Bottom-Right Corner L-Bracket Handle */}
+                          <Line
+                            points={[
+                              frameX + frameW - 12 / camera.zoom, frameY + frameH,
+                              frameX + frameW, frameY + frameH,
+                              frameX + frameW, frameY + frameH - 12 / camera.zoom
+                            ]}
+                            stroke="#0D99FF"
+                            strokeWidth={3 / camera.zoom}
+                            lineCap="square"
+                          />
+                          <Circle
+                            x={frameX + frameW}
+                            y={frameY + frameH}
+                            radius={8 / camera.zoom}
+                            fill="#FFFFFF"
+                            stroke="#0D99FF"
+                            strokeWidth={2 / camera.zoom}
+                            draggable={true}
+                            onDragStart={() => useAppStore.getState().pushHistory()}
+                            onDragMove={(e) => {
+                              const localX = (e.target.x() - camera.panX) / camera.zoom - s.x;
+                              const localY = (e.target.y() - camera.panY) / camera.zoom - s.y;
+                              const newRight = Math.max(0, Math.min(s.width - insets.left - 20, Math.round(s.width - localX)));
+                              const newBottom = Math.max(0, Math.min(s.height - insets.top - 20, Math.round(s.height - localY)));
+                              updateSheetInsets(s.id, { right: newRight, bottom: newBottom });
+                            }}
+                            onMouseEnter={(e) => { e.target.getStage()!.container().style.cursor = 'nwse-resize'; }}
+                            onMouseLeave={(e) => { e.target.getStage()!.container().style.cursor = 'default'; }}
+                          />
+
+                          {/* Bottom-Left Corner L-Bracket Handle */}
+                          <Line
+                            points={[
+                              frameX, frameY + frameH - 12 / camera.zoom,
+                              frameX, frameY + frameH,
+                              frameX + 12 / camera.zoom, frameY + frameH
+                            ]}
+                            stroke="#0D99FF"
+                            strokeWidth={3 / camera.zoom}
+                            lineCap="square"
+                          />
+                          <Circle
+                            x={frameX}
+                            y={frameY + frameH}
+                            radius={8 / camera.zoom}
+                            fill="#FFFFFF"
+                            stroke="#0D99FF"
+                            strokeWidth={2 / camera.zoom}
+                            draggable={true}
+                            onDragStart={() => useAppStore.getState().pushHistory()}
+                            onDragMove={(e) => {
+                              const localX = (e.target.x() - camera.panX) / camera.zoom - s.x;
+                              const localY = (e.target.y() - camera.panY) / camera.zoom - s.y;
+                              const newLeft = Math.max(0, Math.min(s.width - insets.right - 20, Math.round(localX)));
+                              const newBottom = Math.max(0, Math.min(s.height - insets.top - 20, Math.round(s.height - localY)));
+                              updateSheetInsets(s.id, { left: newLeft, bottom: newBottom });
+                            }}
+                            onMouseEnter={(e) => { e.target.getStage()!.container().style.cursor = 'nesw-resize'; }}
+                            onMouseLeave={(e) => { e.target.getStage()!.container().style.cursor = 'default'; }}
+                          />
+
+                          {/* Top Center Edge Bar */}
+                          <Rect
+                            x={frameX + frameW * 0.3}
+                            y={frameY - 4 / camera.zoom}
+                            width={frameW * 0.4}
+                            height={8 / camera.zoom}
+                            fill="#0D99FF"
+                            cornerRadius={3 / camera.zoom}
+                            opacity={0.85}
+                            draggable={true}
+                            onDragStart={() => useAppStore.getState().pushHistory()}
+                            onDragMove={(e) => {
+                              const stageY = e.target.y();
+                              const localY = (stageY - camera.panY) / camera.zoom - s.y;
+                              const newTop = Math.max(0, Math.min(s.height - insets.bottom - 20, Math.round(localY)));
+                              updateSheetInsets(s.id, { top: newTop });
+                            }}
+                            onMouseEnter={(e) => {
+                              const c = e.target.getStage()?.container();
+                              if (c) c.style.cursor = 'ns-resize';
+                            }}
+                            onMouseLeave={(e) => {
+                              const c = e.target.getStage()?.container();
+                              if (c) c.style.cursor = 'default';
+                            }}
+                          />
+
+                          {/* Bottom Center Edge Bar */}
+                          <Rect
+                            x={frameX + frameW * 0.3}
+                            y={frameY + frameH - 4 / camera.zoom}
+                            width={frameW * 0.4}
+                            height={8 / camera.zoom}
+                            fill="#0D99FF"
+                            cornerRadius={3 / camera.zoom}
+                            opacity={0.85}
+                            draggable={true}
+                            onDragStart={() => useAppStore.getState().pushHistory()}
+                            onDragMove={(e) => {
+                              const stageY = e.target.y();
+                              const localY = (stageY - camera.panY) / camera.zoom - s.y;
+                              const newBottom = Math.max(0, Math.min(s.height - insets.top - 20, Math.round(s.height - localY)));
+                              updateSheetInsets(s.id, { bottom: newBottom });
+                            }}
+                            onMouseEnter={(e) => {
+                              const c = e.target.getStage()?.container();
+                              if (c) c.style.cursor = 'ns-resize';
+                            }}
+                            onMouseLeave={(e) => {
+                              const c = e.target.getStage()?.container();
+                              if (c) c.style.cursor = 'default';
+                            }}
+                          />
+
+                          {/* Left Center Edge Bar */}
+                          <Rect
+                            x={frameX - 4 / camera.zoom}
+                            y={frameY + frameH * 0.3}
+                            width={8 / camera.zoom}
+                            height={frameH * 0.4}
+                            fill="#0D99FF"
+                            cornerRadius={3 / camera.zoom}
+                            opacity={0.85}
+                            draggable={true}
+                            onDragStart={() => useAppStore.getState().pushHistory()}
+                            onDragMove={(e) => {
+                              const stageX = e.target.x();
+                              const localX = (stageX - camera.panX) / camera.zoom - s.x;
+                              const newLeft = Math.max(0, Math.min(s.width - insets.right - 20, Math.round(localX)));
+                              updateSheetInsets(s.id, { left: newLeft });
+                            }}
+                            onMouseEnter={(e) => {
+                              const c = e.target.getStage()?.container();
+                              if (c) c.style.cursor = 'ew-resize';
+                            }}
+                            onMouseLeave={(e) => {
+                              const c = e.target.getStage()?.container();
+                              if (c) c.style.cursor = 'default';
+                            }}
+                          />
+
+                          {/* Right Center Edge Bar */}
+                          <Rect
+                            x={frameX + frameW - 4 / camera.zoom}
+                            y={frameY + frameH * 0.3}
+                            width={8 / camera.zoom}
+                            height={frameH * 0.4}
+                            fill="#0D99FF"
+                            cornerRadius={3 / camera.zoom}
+                            opacity={0.85}
+                            draggable={true}
+                            onDragStart={() => useAppStore.getState().pushHistory()}
+                            onDragMove={(e) => {
+                              const stageX = e.target.x();
+                              const localX = (stageX - camera.panX) / camera.zoom - s.x;
+                              const newRight = Math.max(0, Math.min(s.width - insets.left - 20, Math.round(s.width - localX)));
+                              updateSheetInsets(s.id, { right: newRight });
+                            }}
+                            onMouseEnter={(e) => {
+                              const c = e.target.getStage()?.container();
+                              if (c) c.style.cursor = 'ew-resize';
+                            }}
+                            onMouseLeave={(e) => {
+                              const c = e.target.getStage()?.container();
+                              if (c) c.style.cursor = 'default';
+                            }}
+                          />
+                        </Group>
+                      )}
+
+                      {/* Frame Title Badge above sheet with Crop Button */}
+                      <Group x={frameX} y={frameY - 26 / camera.zoom}>
+                        <Rect
+                          x={0}
+                          y={0}
+                          width={230 / camera.zoom}
+                          height={22 / camera.zoom}
+                          fill="rgba(255, 255, 255, 0.95)"
+                          stroke={isEditingBoundary ? '#0D99FF' : isSelected ? '#0D99FF' : '#E5E5E5'}
+                          strokeWidth={1 / camera.zoom}
+                          cornerRadius={4 / camera.zoom}
+                        />
+                        <Text
+                          x={6 / camera.zoom}
+                          y={5 / camera.zoom}
+                          text={s.name || `CP ${idx + 1}`}
+                          fontSize={11 / camera.zoom}
+                          fontFamily="sans-serif"
+                          fontStyle="bold"
+                          fill={isSelected ? '#0D99FF' : '#111827'}
+                        />
+                        <Text
+                          x={((s.name || `CP ${idx + 1}`).length * 7 + 12) / camera.zoom}
+                          y={6 / camera.zoom}
+                          text={`${Math.round(frameW)}×${Math.round(frameH)}`}
+                          fontSize={9 / camera.zoom}
+                          fontFamily="monospace"
+                          fill="#6B7280"
+                        />
+                        {/* Interactive Crop Boundary Button on Badge */}
+                        <Group
+                          x={165 / camera.zoom}
+                          y={2 / camera.zoom}
+                          onClick={(e) => {
+                            e.cancelBubble = true;
+                            setBoundaryEditSheetId(isEditingBoundary ? null : s.id);
+                          }}
+                          onTap={(e) => {
+                            e.cancelBubble = true;
+                            setBoundaryEditSheetId(isEditingBoundary ? null : s.id);
+                          }}
+                        >
+                          <Rect
+                            width={58 / camera.zoom}
+                            height={18 / camera.zoom}
+                            fill={isEditingBoundary ? '#0D99FF' : '#F3F4F6'}
+                            cornerRadius={3 / camera.zoom}
+                          />
+                          <Text
+                            x={8 / camera.zoom}
+                            y={4 / camera.zoom}
+                            text={isEditingBoundary ? '✓ Done' : '✂ Crop'}
+                            fontSize={9 / camera.zoom}
+                            fontFamily="sans-serif"
+                            fontStyle="bold"
+                            fill={isEditingBoundary ? '#FFFFFF' : '#374151'}
+                          />
+                        </Group>
+                      </Group>
+                    </>
+                  );
+                })()}
+              </Group>
+            );
+          })}
+
+          {/* Figma-style Selection & Resize Transformer */}
+          {activeTool === 'select' && (selectedImageId || (activeSheetId && activeSheetId !== 'main_cp')) && (
+            <Transformer
+              ref={trRef}
+              anchorSize={Math.max(6, Math.min(10, 8 / camera.zoom))}
+              anchorCornerRadius={1.5 / camera.zoom}
+              anchorStroke="#0D99FF"
+              anchorFill="#FFFFFF"
+              anchorStrokeWidth={1.5 / camera.zoom}
+              borderStroke="#0D99FF"
+              borderStrokeWidth={1 / camera.zoom}
+              rotateEnabled={false}
+              ignoreStroke={true}
+              keepRatio={true}
+              enabledAnchors={[
+                'top-left',
+                'top-right',
+                'bottom-right',
+                'bottom-left',
+              ]}
+              boundBoxFunc={(oldBox, newBox) => {
+                if (Math.abs(newBox.width) < 30 || Math.abs(newBox.height) < 30) {
+                  return oldBox;
+                }
+                return newBox;
+              }}
+            />
+          )}
         </Layer>
       </Stage>
+      {/* Floating Crop Action Bar */}
+      {cropBox && cropBox.active && cropBox.width > 20 && cropBox.height > 20 && (
+        <div
+          className="absolute z-30 flex items-center gap-2 bg-white/95 backdrop-blur-md border border-[#E5E5E5] shadow-2xl rounded-2xl p-2 animate-in fade-in zoom-in-95 duration-150 select-none pointer-events-auto"
+          style={{
+            left: `${Math.max(20, Math.min(dimensions.width - 460, cropBox.x * camera.zoom + camera.panX))}px`,
+            top: `${Math.max(20, cropBox.y * camera.zoom + camera.panY - 54)}px`,
+          }}
+        >
+          {/* Crop Dimensions and Aspect Ratio Tag */}
+          <div className="flex items-center gap-1.5 px-2.5 py-1 bg-gray-50 border border-gray-200 rounded-lg text-xs font-mono text-gray-700">
+            <span>{Math.round(cropBox.width)} × {Math.round(cropBox.height)}</span>
+            <span className="text-[10px] text-gray-500 font-sans">
+              ({Math.abs(cropBox.width - cropBox.height) < 2 ? '1:1' : (cropBox.width / (cropBox.height || 1)).toFixed(2)})
+            </span>
+          </div>
+
+          {/* 1:1 Square Constrain Button */}
+          <button
+            type="button"
+            onClick={() => {
+              const side = Math.round(Math.max(cropBox.width, cropBox.height));
+              setCropBox({ ...cropBox, width: side, height: side });
+            }}
+            className={`h-7 px-2.5 font-medium text-xs rounded-lg flex items-center gap-1 transition-colors cursor-pointer ${
+              Math.abs(cropBox.width - cropBox.height) < 2
+                ? 'bg-[#EBF5FF] text-[#0D99FF] border border-[#BCE1FF] font-semibold'
+                : 'hover:bg-gray-100 text-gray-700 border border-transparent'
+            }`}
+            title="Ép khung cắt thành hình vuông 1:1"
+          >
+            <Square className="w-3.5 h-3.5" />
+            <span>1:1 Square</span>
+          </button>
+
+          <div className="w-[1px] h-4 bg-gray-200" />
+
+          {/* Button 1: Paste to Left CP (Main Workspace) with Autofit */}
+          <button
+            type="button"
+            onClick={() => {
+              const cropInfo = getCroppedImageInfo();
+              if (cropInfo) {
+                setReferenceImageFromCropped(cropInfo.dataUrl, 'Cropped_CP.png', cropInfo.width, cropInfo.height);
+                setActiveTool('select');
+                setCropBox(null);
+                setTimeout(() => {
+                  fitToPaper(dimensions.width - 400, dimensions.height - 80);
+                }, 60);
+              }
+            }}
+            className="h-7 px-3 bg-[#0D99FF] hover:bg-[#0088EE] text-white font-medium text-xs rounded-lg flex items-center gap-1.5 shadow-2xs transition-colors cursor-pointer"
+            title="Dán vùng cắt này sang CP chính và tự động căn khung (bật sẵn Grid để inspect, không bắt buộc chạy CV)"
+          >
+            <ArrowLeft className="w-3.5 h-3.5" />
+            <span>Paste to Left CP</span>
+          </button>
+
+          {/* Button 2: Extract to Right Sheet */}
+          <button
+            type="button"
+            onClick={() => {
+              const cropInfo = getCroppedImageInfo();
+              const allRightEdges = [
+                paperPosition.x + 1000,
+                ...sheets.map((s) => s.x + s.width),
+                ...canvasImages.map((i) => i.x + i.width),
+              ];
+              const newX = Math.max(...allRightEdges) + 120;
+              const newY = paperPosition.y;
+
+              const cropAspect = cropInfo ? cropInfo.width / (cropInfo.height || 1) : 1;
+              const sheetW = 1000;
+              const sheetH = Math.round(1000 / cropAspect);
+
+              const newSheetId = addSheet({
+                name: `CP ${sheets.length + 1} (Cut)`,
+                x: newX,
+                y: newY,
+                width: sheetW,
+                height: sheetH,
+                imageUrl: cropInfo?.dataUrl || undefined,
+                creases: [],
+                points: [],
+                grid: { ...grid, enabled: true, divisionsX: 64, divisionsY: Math.max(8, Math.round(64 / cropAspect)) },
+                paper: {
+                  corners: [
+                    { x: 0, y: 0 },
+                    { x: sheetW, y: 0 },
+                    { x: sheetW, y: sheetH },
+                    { x: 0, y: sheetH },
+                  ],
+                  rectified: true,
+                  homography: IDENTITY_HOMOGRAPHY,
+                  inverseHomography: IDENTITY_HOMOGRAPHY,
+                  aspectRatio: cropAspect,
+                },
+              });
+              if (cropInfo) {
+                const imgObj = new window.Image();
+                imgObj.src = cropInfo.dataUrl;
+                setSheetImages((prev) => ({ ...prev, [newSheetId]: imgObj }));
+              }
+              setCropBox(null);
+              setActiveSheetId(newSheetId);
+              setActiveTool('select');
+
+              const stageW = dimensions.width;
+              const stageH = dimensions.height;
+              const zoom = camera.zoom;
+              const newPanX = (stageW - sheetW * zoom) / 2 - newX * zoom;
+              const newPanY = (stageH - sheetH * zoom) / 2 - newY * zoom;
+              setCamera({ panX: newPanX, panY: newPanY });
+            }}
+            className="h-7 px-2.5 bg-gray-100 hover:bg-gray-200 text-gray-800 font-medium text-xs rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer"
+            title="Tạo CP sheet mới chứa ảnh cắt này ở bên phải với tỉ lệ tự nhiên"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-[#0D99FF]" />
+            <span>Extract to Right Sheet</span>
+          </button>
+
+          {/* Button 3: Paste as Canvas Image */}
+          <button
+            type="button"
+            onClick={() => {
+              const cropInfo = getCroppedImageInfo();
+              if (cropInfo && cropBox) {
+                addCanvasImage({
+                  url: cropInfo.dataUrl,
+                  name: `Crop_${Date.now().toString().slice(-4)}.png`,
+                  x: Math.round(cropBox.x + cropBox.width + 30),
+                  y: Math.round(cropBox.y),
+                  width: Math.round(cropBox.width),
+                  height: Math.round(cropBox.height),
+                });
+                setCropBox(null);
+                setActiveTool('select');
+              }
+            }}
+            className="h-7 px-2 hover:bg-gray-100 text-gray-600 hover:text-gray-900 rounded-lg text-xs transition-colors cursor-pointer"
+            title="Dán làm ảnh rời trên Canvas"
+          >
+            <Copy className="w-3.5 h-3.5" />
+            <span>As Image</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setCropBox(null)}
+            className="h-7 px-2 hover:bg-gray-100 text-gray-500 hover:text-gray-900 rounded-lg text-xs transition-colors cursor-pointer"
+          >
+            Cancel
+          </button>
+        </div>
+      )}
+      {/* Floating Boundary Edit Toolbar for active sheet */}
+      {boundaryEditSheetId && (() => {
+        const targetSheet = sheets.find((s) => s.id === boundaryEditSheetId);
+        if (!targetSheet) return null;
+        const insets = targetSheet.insets || { top: 0, right: 0, bottom: 0, left: 0 };
+        const frameX = insets.left;
+        const frameY = insets.top;
+        const frameW = Math.max(20, targetSheet.width - insets.left - insets.right);
+        const frameH = Math.max(20, targetSheet.height - insets.top - insets.bottom);
+        const screenX = (targetSheet.x + frameX) * camera.zoom + camera.panX;
+        const screenY = (targetSheet.y + frameY) * camera.zoom + camera.panY;
+
+        return (
+          <div
+            className="absolute z-30 flex items-center gap-2 bg-white/95 backdrop-blur-md border border-[#E5E5E5] shadow-2xl rounded-2xl p-2 animate-in fade-in zoom-in-95 duration-150 select-none pointer-events-auto"
+            style={{
+              left: `${Math.max(20, Math.min(dimensions.width - 480, screenX))}px`,
+              top: `${Math.max(20, screenY - 54)}px`,
+            }}
+          >
+            {/* Dimensions Badge */}
+            <div className="flex items-center gap-1.5 px-2.5 py-1 bg-gray-50 border border-gray-200 rounded-lg text-xs font-mono text-gray-700">
+              <Crop className="w-3.5 h-3.5 text-[#0D99FF]" />
+              <span>{Math.round(frameW)} × {Math.round(frameH)}</span>
+            </div>
+
+            {/* Auto-Snap Button */}
+            <button
+              type="button"
+              onClick={() => autoTrimBoundary(boundaryEditSheetId)}
+              className="h-7 px-3 bg-[#EBF5FF] hover:bg-[#DEF0FF] text-[#0D99FF] font-medium text-xs rounded-lg flex items-center gap-1.5 border border-[#BCE1FF] transition-colors cursor-pointer"
+              title="Tự động quét nét gấp và ép sát 4 cạnh viền"
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>Auto-Snap</span>
+            </button>
+
+            {/* 1:1 Square Button */}
+            <button
+              type="button"
+              onClick={() => {
+                const maxDim = Math.max(frameW, frameH);
+                const diffW = maxDim - frameW;
+                const diffH = maxDim - frameH;
+                updateSheetInsets(boundaryEditSheetId, {
+                  left: Math.max(0, insets.left - Math.round(diffW / 2)),
+                  right: Math.max(0, insets.right - Math.round(diffW / 2)),
+                  top: Math.max(0, insets.top - Math.round(diffH / 2)),
+                  bottom: Math.max(0, insets.bottom - Math.round(diffH / 2)),
+                });
+              }}
+              className="h-7 px-2.5 hover:bg-gray-100 text-gray-700 font-medium text-xs rounded-lg flex items-center gap-1 border border-gray-200 transition-colors cursor-pointer"
+              title="Ép khung thành hình vuông 1:1"
+            >
+              <Square className="w-3.5 h-3.5" />
+              <span>1:1</span>
+            </button>
+
+            {/* Reset Button */}
+            <button
+              type="button"
+              onClick={() => updateSheetInsets(boundaryEditSheetId, { top: 0, right: 0, bottom: 0, left: 0 })}
+              className="h-7 px-2 hover:bg-gray-100 text-gray-600 font-medium text-xs rounded-lg transition-colors cursor-pointer"
+              title="Đặt lại về kích thước ban đầu"
+            >
+              Reset
+            </button>
+
+            <div className="w-[1px] h-4 bg-gray-200" />
+
+            {/* Done Button */}
+            <button
+              type="button"
+              onClick={() => setBoundaryEditSheetId(null)}
+              className="h-7 px-3 bg-[#0D99FF] hover:bg-[#0088EE] text-white font-medium text-xs rounded-lg flex items-center gap-1 shadow-2xs transition-colors cursor-pointer"
+              title="Xác nhận và đóng chế độ chỉnh viền (Enter / Esc)"
+            >
+              <span>Done</span>
+            </button>
+          </div>
+        );
+      })()}
+
 
       {/* Loupe Magnifier when Alt is pressed or active */}
       <Loupe

@@ -1,8 +1,7 @@
-import { splitCreaseJunctions } from '../geometry/mountainValley';
 import { extractRasterLines, inferRasterGrid, analyzeRasterGrid, snapCreasesToOrigamiGrid } from './rasterLines';
-import { Point2D } from '../geometry/point';
-import { CreaseLine, ReferencePoint, AnalysisReport } from '../store/types';
-import { CreaseType, lineFromPoints } from '../geometry/line';
+import type { Point2D } from '../geometry/point';
+import type { CreaseLine, ReferencePoint, AnalysisReport } from '../store/types';
+import { lineFromPoints, type CreaseType } from '../geometry/line';
 import { approximateFraction } from '../geometry/rational';
 import { findCreaseIntersections } from '../geometry/intersection';
 
@@ -148,7 +147,8 @@ function evaluateSegmentType(
 
   let redVotes = 0;
   let blueVotes = 0;
-  const samples = [0.2, 0.4, 0.6, 0.8];
+  const samples = [0.15, 0.35, 0.5, 0.65, 0.85];
+  const offsets = [-2.0, -1.0, 0.0, 1.0, 2.0];
 
   for (const t of samples) {
     const cx = x1 + t * dx;
@@ -157,18 +157,13 @@ function evaluateSegmentType(
     let bestRed = false;
     let bestBlue = false;
 
-    // Check cross-section offsets: -1px, 0px, +1px perpendicular
-    for (const off of [-1.0, 0.0, 1.0]) {
+    for (const off of offsets) {
       const { r, g, b } = sampleColorPx(data, imgW, imgH, cx + off * nx, cy + off * ny);
 
-      // Filter out pure white paper background (r+g+b > 690)
       if (r + g + b < 690) {
-        // Red Mountain: red excess over green and blue
-        if (r - g >= 25 && r - b >= 25 && r > 80) {
+        if (r - Math.max(g, b) >= 15 && r > 70) {
           bestRed = true;
-        }
-        // Blue Valley: blue excess over red and green
-        else if (b - r >= 12 && b - g >= 8 && b > 60) {
+        } else if (b - Math.max(r, g) >= 10 && b > 60) {
           bestBlue = true;
         }
       }
@@ -186,6 +181,15 @@ function evaluateSegmentType(
 /**
  * Snaps detected CP region to solid outer boundary lines if present
  */
+function isBorderInk(r: number, g: number, b: number): boolean {
+  if (r + g + b > 680) return false;
+  if (r < 80 && g < 80 && b < 80) return true;
+  if (r - Math.max(g, b) > 20 && r > 70) return true;
+  if (b - Math.max(r, g) > 15 && b > 60) return true;
+  if (r + g + b < 520) return true;
+  return false;
+}
+
 export function refineCPRegion(
   data: Uint8ClampedArray,
   imgW: number,
@@ -193,69 +197,75 @@ export function refineCPRegion(
   reg: { x0: number; y0: number; width: number; height: number }
 ): { x0: number; y0: number; width: number; height: number } {
   let bestY0 = reg.y0;
-  let bestY1 = reg.y0 + reg.height;
-  let bestX0 = reg.x0;
-  let bestX1 = reg.x0 + reg.width;
-
-  // Look for peak dark row near y0
-  for (let y = Math.max(0, reg.y0 - 6); y <= Math.min(imgH - 1, reg.y0 + 12); y++) {
-    let dark = 0;
+  let maxInkY0 = 0;
+  for (let y = Math.max(0, reg.y0 - 12); y <= Math.min(imgH - 1, reg.y0 + 15); y++) {
+    let count = 0;
     for (let x = reg.x0; x <= reg.x0 + reg.width; x++) {
       const { r, g, b } = sampleColorPx(data, imgW, imgH, x, y);
-      if (r < 75 && g < 75 && b < 75) dark++;
+      if (isBorderInk(r, g, b)) count++;
     }
-    if (dark > reg.width * 0.7) {
+    if (count > maxInkY0 && count > reg.width * 0.4) {
+      maxInkY0 = count;
       bestY0 = y;
-      break;
     }
   }
 
-  // Look for peak dark row near y1
-  for (let y = Math.min(imgH - 1, reg.y0 + reg.height + 6); y >= Math.max(0, reg.y0 + reg.height - 12); y--) {
-    let dark = 0;
+  let bestY1 = reg.y0 + reg.height;
+  let maxInkY1 = 0;
+  for (let y = Math.min(imgH - 1, reg.y0 + reg.height + 12); y >= Math.max(0, reg.y0 + reg.height - 15); y--) {
+    let count = 0;
     for (let x = reg.x0; x <= reg.x0 + reg.width; x++) {
       const { r, g, b } = sampleColorPx(data, imgW, imgH, x, y);
-      if (r < 75 && g < 75 && b < 75) dark++;
+      if (isBorderInk(r, g, b)) count++;
     }
-    if (dark > reg.width * 0.7) {
+    if (count > maxInkY1 && count > reg.width * 0.4) {
+      maxInkY1 = count;
       bestY1 = y;
-      break;
     }
   }
 
-  // Look for peak dark col near x0
-  for (let x = Math.max(0, reg.x0 - 6); x <= Math.min(imgW - 1, reg.x0 + 12); x++) {
-    let dark = 0;
+  let bestX0 = reg.x0;
+  let maxInkX0 = 0;
+  for (let x = Math.max(0, reg.x0 - 12); x <= Math.min(imgW - 1, reg.x0 + 15); x++) {
+    let count = 0;
     for (let y = bestY0; y <= bestY1; y++) {
       const { r, g, b } = sampleColorPx(data, imgW, imgH, x, y);
-      if (r < 75 && g < 75 && b < 75) dark++;
+      if (isBorderInk(r, g, b)) count++;
     }
-    if (dark > (bestY1 - bestY0) * 0.7) {
+    if (count > maxInkX0 && count > (bestY1 - bestY0) * 0.4) {
+      maxInkX0 = count;
       bestX0 = x;
-      break;
     }
   }
 
-  // Look for peak dark col near x1
-  for (let x = Math.min(imgW - 1, reg.x0 + reg.width + 6); x >= Math.max(0, reg.x0 + reg.width - 12); x--) {
-    let dark = 0;
+  let bestX1 = reg.x0 + reg.width;
+  let maxInkX1 = 0;
+  for (let x = Math.min(imgW - 1, reg.x0 + reg.width + 12); x >= Math.max(0, reg.x0 + reg.width - 15); x--) {
+    let count = 0;
     for (let y = bestY0; y <= bestY1; y++) {
       const { r, g, b } = sampleColorPx(data, imgW, imgH, x, y);
-      if (r < 75 && g < 75 && b < 75) dark++;
+      if (isBorderInk(r, g, b)) count++;
     }
-    if (dark > (bestY1 - bestY0) * 0.7) {
+    if (count > maxInkX1 && count > (bestY1 - bestY0) * 0.4) {
+      maxInkX1 = count;
       bestX1 = x;
-      break;
     }
   }
 
   const w = bestX1 - bestX0;
   const h = bestY1 - bestY0;
+  let finalW = w > 50 ? w : reg.width;
+  let finalH = h > 50 ? h : reg.height;
+  if (Math.abs(finalW - finalH) <= Math.max(finalW, finalH) * 0.03) {
+    const avgDim = Math.round((finalW + finalH) / 2);
+    finalW = avgDim;
+    finalH = avgDim;
+  }
   return {
     x0: bestX0,
     y0: bestY0,
-    width: w > 50 ? w : reg.width,
-    height: h > 50 ? h : reg.height,
+    width: finalW,
+    height: finalH,
   };
 }
 
@@ -458,16 +468,39 @@ export async function analyzePixels(
   const gridInfo = analyzeRasterGrid(rawLines, size, options?.gridHint);
   const N = gridInfo.n;
 
-  const processedLines = gridInfo.isGrid
+  const creases: CreaseLine[] = gridInfo.isGrid
     ? snapCreasesToOrigamiGrid(rawLines, N, size)
     : rawLines;
 
-  const creases = splitCreaseJunctions(processedLines, {
-    tolerance: gridInfo.isGrid ? 3.5 / size : 6.5 / size,
-    gridN: gridInfo.isGrid ? N : undefined,
-    size,
-  });
+  // Guarantee the 4 square paper boundary edges are present
+  const hasEdge = (p1: Point2D, p2: Point2D) =>
+    creases.some(
+      (c) =>
+        c.type === 'edge' &&
+        ((Math.hypot(c.p1.x - p1.x, c.p1.y - p1.y) < 0.05 && Math.hypot(c.p2.x - p2.x, c.p2.y - p2.y) < 0.05) ||
+         (Math.hypot(c.p1.x - p2.x, c.p1.y - p2.y) < 0.05 && Math.hypot(c.p2.x - p1.x, c.p2.y - p1.y) < 0.05))
+    );
 
+  const boundaryEdges: [Point2D, Point2D][] = [
+    [{ x: 0, y: 0 }, { x: 1, y: 0 }],
+    [{ x: 1, y: 0 }, { x: 1, y: 1 }],
+    [{ x: 1, y: 1 }, { x: 0, y: 1 }],
+    [{ x: 0, y: 1 }, { x: 0, y: 0 }],
+  ];
+
+  let edgeCounter = 1;
+  for (const [p1, p2] of boundaryEdges) {
+    if (!hasEdge(p1, p2)) {
+      creases.unshift({
+        id: `paper_edge_${edgeCounter++}`,
+        p1,
+        p2,
+        type: 'edge',
+        confirmed: true,
+        equation: lineFromPoints(p1, p2),
+      });
+    }
+  }
   onProgress?.('Detecting and vectorizing crease lines...', 75);
   await new Promise((r) => setTimeout(r, 80));
 

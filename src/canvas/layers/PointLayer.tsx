@@ -11,6 +11,8 @@ interface PointLayerProps {
   onSelectPoint: (id: string) => void;
   onMovePoint: (id: string, point: { x: number; y: number }) => void;
   onHoverPoint: (p: ReferencePoint | null) => void;
+  paperWidth?: number;
+  paperHeight?: number;
 }
 
 export const PointLayer: React.FC<PointLayerProps> = React.memo(({
@@ -21,7 +23,11 @@ export const PointLayer: React.FC<PointLayerProps> = React.memo(({
   onSelectPoint,
   onMovePoint,
   onHoverPoint,
+  paperWidth,
+  paperHeight,
 }) => {
+  const pW = paperWidth || BASE_PAPER_SIZE;
+  const pH = paperHeight || BASE_PAPER_SIZE;
   // Figma handle: ~8-10px screen diameter regardless of zoom
   const radius = 4.5 / zoom;
   const strokeW = 1 / zoom;
@@ -30,8 +36,8 @@ export const PointLayer: React.FC<PointLayerProps> = React.memo(({
     <Group>
       {points.map((p) => {
         const isSelected = p.id === selectedId;
-        const wx = p.x * BASE_PAPER_SIZE;
-        const wy = p.y * BASE_PAPER_SIZE;
+        const wx = p.x * pW;
+        const wy = p.y * pH;
 
         return (
           <Group
@@ -49,8 +55,8 @@ export const PointLayer: React.FC<PointLayerProps> = React.memo(({
             e.cancelBubble = true;
             const node = e.target;
             onMovePoint(p.id, {
-              x: Math.max(0, Math.min(1, node.x() / BASE_PAPER_SIZE)),
-              y: Math.max(0, Math.min(1, node.y() / BASE_PAPER_SIZE)),
+              x: Math.max(0, Math.min(1, node.x() / pW)),
+              y: Math.max(0, Math.min(1, node.y() / pH)),
             });
           }}
             onClick={() => onSelectPoint(p.id)}

@@ -13,7 +13,6 @@ import {
 import { useAppStore } from '../store/projectStore';
 import { exportProjectJson, exportSvg, exportPointsCsv } from '../export/exportProject';
 import { snapCreasesToOrigamiGrid } from '../cv/rasterLines';
-import { splitCreaseJunctions } from '../geometry/mountainValley';
 import { approximateFraction } from '../geometry/rational';
 
 interface CommandPaletteProps {
@@ -251,11 +250,6 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
           const N = grid.divisionsX;
           const size = 1000;
           const snapped = snapCreasesToOrigamiGrid(creases, N, size);
-          const split = splitCreaseJunctions(snapped, {
-            tolerance: 3.5 / size,
-            gridN: N,
-            size,
-          });
           const updatedPoints = points.map((p) => {
             const gx = Math.round(p.x * N) / N;
             const gy = Math.round(p.y * N) / N;
@@ -271,7 +265,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
               yGrid: approximateFraction(py, { maxDenominator: N }),
             };
           });
-          useAppStore.setState({ creases: split, points: updatedPoints });
+          useAppStore.setState({ creases: snapped, points: updatedPoints });
         }
         onClose();
       },

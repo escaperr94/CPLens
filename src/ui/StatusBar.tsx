@@ -3,11 +3,10 @@ import { Layers, ChevronsUpDown } from 'lucide-react';
 import { useAppStore } from '../store/projectStore';
 
 export const StatusBar: React.FC = () => {
-  const { cursorPaper, camera, snapCandidate, snappingEnabled, grid, creases, points } = useAppStore();
+  const { cursorPaper, targetPoint, camera, snapCandidate, snappingEnabled, grid, creases, points } = useAppStore();
 
   const coordX = cursorPaper ? (cursorPaper.x * grid.divisionsX).toFixed(4) : '0.0000';
   const coordY = cursorPaper ? (cursorPaper.y * grid.divisionsY).toFixed(4) : '0.0000';
-
   let snapText = 'none';
   if (snappingEnabled) {
     if (snapCandidate) {
@@ -37,18 +36,22 @@ export const StatusBar: React.FC = () => {
           <span className="font-mono text-[11px]">{creases.length} creases · {points.length} points</span>
         </div>
 
-        {/* Coordinates */}
-        <div className="flex items-center space-x-3 font-mono text-[11px] text-neutral-600">
+        {/* Coordinates or Pinned Target */}
+        <div className="flex items-center space-x-2 font-mono text-[11px] text-neutral-600">
+          {targetPoint ? (
+            <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-[#E1E8F5] text-[#4F6BA6] border border-[#4F6BA6]/20 font-semibold text-[10px]">
+              <span className="w-1.5 h-1.5 rounded-full bg-[#4F6BA6] animate-pulse" />
+              <span>Pinned: ({targetPoint.x.toFixed(4)}, {targetPoint.y.toFixed(4)})</span>
+            </span>
+          ) : (
+            <span className="text-[#86868B]">Click paper to pin point</span>
+          )}
           <span>
-            x = <span className="text-neutral-800 font-medium">{coordX}</span>
-          </span>
-          <span>
-            y = <span className="text-neutral-800 font-medium">{coordY}</span>
+            cursor: ({cursorPaper ? cursorPaper.x.toFixed(4) : '--'}, {cursorPaper ? cursorPaper.y.toFixed(4) : '--'})
           </span>
         </div>
 
         <div className="h-3 w-px bg-neutral-200" />
-
         {/* Grid size */}
         <div className="flex items-center space-x-1 font-mono text-[11px] text-neutral-600">
           <span>grid =</span>

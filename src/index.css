@@ -3,7 +3,7 @@
 @tailwind utilities;
 
 :root {
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", sans-serif;
+  font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
   color-scheme: light;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -15,16 +15,16 @@ body {
   width: 100vw;
   height: 100vh;
   overflow: hidden;
-  background-color: #FAFAFA;
-  color: #1D1D1F;
+  background-color: #F7F7F7;
+  color: #111827;
   user-select: none;
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", sans-serif;
+  font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
 }
 
-/* Minimal refined light scrollbars */
+/* Clean Figma-style dense scrollbars */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 5px;
+  height: 5px;
 }
 
 ::-webkit-scrollbar-track {
@@ -32,19 +32,19 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #D2D2D7;
+  background: #D1D5DB;
   border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #A1A1A6;
+  background: #9CA3AF;
 }
 
-/* Quiet Premium input focus styles */
+/* Precision focus outline */
 input:focus,
 select:focus,
 textarea:focus {
-  outline: 1.5px solid #4F6BA6 !important;
+  outline: 2px solid #18A0FB !important;
   outline-offset: -1px;
 }
 

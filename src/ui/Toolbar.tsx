@@ -10,6 +10,7 @@ import {
   Crosshair,
   Grid,
   Divide,
+  HelpCircle,
 } from 'lucide-react';
 import { useAppStore } from '../store/projectStore';
 import { ToolType } from '../store/types';
@@ -19,10 +20,15 @@ interface ToolItem {
   tool: ToolType;
   label: string;
   shortcut: string;
+  description: string;
   icon: React.ReactNode;
 }
 
-export const Toolbar: React.FC = () => {
+interface ToolbarProps {
+  onOpenToolGuide?: () => void;
+}
+
+export const Toolbar: React.FC<ToolbarProps> = ({ onOpenToolGuide }) => {
   const { activeTool, setActiveTool, creaseType, setCreaseType } = useAppStore(useShallow((state) => ({
     activeTool: state.activeTool,
     setActiveTool: state.setActiveTool,
@@ -31,15 +37,15 @@ export const Toolbar: React.FC = () => {
   })));
 
   const tools: ToolItem[] = [
-    { tool: 'select', label: 'Select', shortcut: 'V', icon: <MousePointer2 className="w-4 h-4" /> },
-    { tool: 'pan', label: 'Hand Tool (Pan)', shortcut: 'H', icon: <Hand className="w-4 h-4" /> },
-    { tool: 'calibrate', label: 'Calibrate Paper (4 Corners)', shortcut: 'K', icon: <Compass className="w-4 h-4" /> },
-    { tool: 'point', label: 'Reference Point', shortcut: 'P', icon: <MapPin className="w-4 h-4" /> },
-    { tool: 'measure', label: 'Two-Point Measure', shortcut: 'M', icon: <Ruler className="w-4 h-4" /> },
-    { tool: 'line', label: 'Crease Line', shortcut: 'L', icon: <Spline className="w-4 h-4" /> },
-    { tool: 'ruler', label: 'Crosshair Ruler', shortcut: 'R', icon: <Crosshair className="w-4 h-4" /> },
-    { tool: 'grid', label: 'Grid Overlay', shortcut: 'G', icon: <Grid className="w-4 h-4" /> },
-    { tool: 'symmetry', label: 'Symmetry Reflection', shortcut: 'Y', icon: <Divide className="w-4 h-4" /> },
+    { tool: 'select', label: 'Select & Inspect', shortcut: 'V', description: 'Inspect crease angles, coordinates & math', icon: <MousePointer2 className="w-4 h-4" /> },
+    { tool: 'pan', label: 'Hand Tool (Pan)', shortcut: 'H', description: 'Click and drag to pan viewport', icon: <Hand className="w-4 h-4" /> },
+    { tool: 'calibrate', label: 'Calibrate Paper', shortcut: 'K', description: 'Pick 4 corners to rectify photo perspective', icon: <Compass className="w-4 h-4" /> },
+    { tool: 'point', label: 'Reference Point', shortcut: 'P', description: 'Pin landmark & solve 22.5° fold sequences', icon: <MapPin className="w-4 h-4" /> },
+    { tool: 'measure', label: 'Two-Point Measure', shortcut: 'M', description: 'Measure distance & origami rational ratio', icon: <Ruler className="w-4 h-4" /> },
+    { tool: 'line', label: 'Crease Line', shortcut: 'L', description: 'Draw Mountain (red), Valley (blue), or Edge folds', icon: <Spline className="w-4 h-4" /> },
+    { tool: 'ruler', label: 'Crosshair Ruler', shortcut: 'R', description: 'Drop orthogonal guidelines with exact fractions', icon: <Crosshair className="w-4 h-4" /> },
+    { tool: 'grid', label: 'Grid Overlay', shortcut: 'G', description: 'Display & snap to box-pleat lattice (16 to 128)', icon: <Grid className="w-4 h-4" /> },
+    { tool: 'symmetry', label: 'Symmetry Reflection', shortcut: 'Y', description: 'Reflect creases across fold axes', icon: <Divide className="w-4 h-4" /> },
   ];
 
   return (
@@ -59,9 +65,12 @@ export const Toolbar: React.FC = () => {
             {item.icon}
 
             {/* Tooltip */}
-            <div className="absolute left-12 px-2.5 py-1 bg-neutral-900 text-white rounded-lg text-[11px] font-sans font-medium whitespace-nowrap shadow-lg hidden group-hover:block z-50 pointer-events-none">
-              <span>{item.label}</span>{' '}
-              <span className="text-neutral-400 font-mono ml-1">[{item.shortcut}]</span>
+            <div className="absolute left-12 px-3 py-1.5 bg-neutral-900 text-white rounded-xl text-[11px] font-sans font-medium whitespace-nowrap shadow-xl hidden group-hover:flex flex-col z-50 pointer-events-none border border-neutral-700/50">
+              <div className="flex items-center space-x-1.5">
+                <span className="font-semibold text-white">{item.label}</span>
+                <span className="text-neutral-400 font-mono text-[10px]">[{item.shortcut}]</span>
+              </div>
+              <span className="text-[10px] text-neutral-300 font-normal mt-0.5">{item.description}</span>
             </div>
           </button>
         );
@@ -90,6 +99,23 @@ export const Toolbar: React.FC = () => {
               {item.type.charAt(0)}
             </button>
           ))}
+        </div>
+      )}
+
+      {/* Bottom Tool Guide trigger */}
+      {onOpenToolGuide && (
+        <div className="pt-1.5 border-t border-neutral-200 mt-1 flex flex-col items-center">
+          <button
+            onClick={onOpenToolGuide}
+            aria-label="Origami CAD Tool Guide"
+            className="w-9 h-9 rounded-xl flex items-center justify-center text-neutral-400 hover:text-[#4F6BA6] hover:bg-[#E1E8F5] transition relative group"
+          >
+            <HelpCircle className="w-4 h-4" />
+            <div className="absolute left-12 px-3 py-1.5 bg-neutral-900 text-white rounded-xl text-[11px] font-sans font-medium whitespace-nowrap shadow-xl hidden group-hover:flex flex-col z-50 pointer-events-none border border-neutral-700/50">
+              <span className="font-semibold text-white">Tool Guide & Tutorials</span>
+              <span className="text-[10px] text-neutral-300 font-normal mt-0.5">Learn how Crosshairs, Reference Finder & Grids work</span>
+            </div>
+          </button>
         </div>
       )}
     </aside>

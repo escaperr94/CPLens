@@ -16,7 +16,8 @@ export type ToolType =
   | 'line'
   | 'ruler'
   | 'grid'
-  | 'symmetry';
+  | 'symmetry'
+  | 'eraser';
 
 export type CPViewMode = 'vector' | 'overlay' | 'image';
 
@@ -76,6 +77,50 @@ export interface PaperCalibration {
   aspectRatio: number;
 }
 
+export interface ImageTransform {
+  scale: number; // 0.5 to 3.0, default 1.0 (100%)
+  offsetX: number; // in paper pixels (-500 to +500)
+  offsetY: number; // in paper pixels (-500 to +500)
+}
+
+export interface SheetInsets {
+  top: number;
+  right: number;
+  bottom: number;
+  left: number;
+}
+
+export interface CanvasImage {
+  id: string;
+  url: string;
+  name: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface CPSheet {
+  id: string;
+  name: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  imageUrl?: string;
+  sourceImageId?: string;
+  cropBox?: CropBox;
+  transform?: ImageTransform;
+  insets?: SheetInsets;
+  paper: PaperCalibration;
+  grid: GridConfig;
+  points: ReferencePoint[];
+  creases: CreaseLine[];
+  measurements: MeasurementItem[];
+  rulers: RulerItem[];
+  viewMode: CPViewMode;
+}
+
 export interface CameraState {
   zoom: number; // 0.05 to 64.0
   panX: number;
@@ -114,6 +159,7 @@ export interface ProjectState {
     width: number;
     height: number;
     crop: CropBox | null;
+    transform?: ImageTransform;
   };
   paper: PaperCalibration;
   grid: GridConfig;
@@ -126,4 +172,7 @@ export interface ProjectState {
     axes: SymmetryAxis[];
   };
   layers: LayerVisibility;
+  sheets?: CPSheet[];
+  activeSheetId?: string | null;
+  canvasImages?: CanvasImage[];
 }
