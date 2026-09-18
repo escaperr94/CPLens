@@ -43,7 +43,7 @@ export const Toolbar: React.FC = () => {
   ];
 
   return (
-    <aside className="absolute left-4 top-16 z-20 flex flex-col items-center bg-white border border-neutral-200/80 rounded-2xl shadow-[0_4px_24px_rgba(0,0,0,0.06)] p-1.5 space-y-1 select-none">
+    <aside className="absolute left-4 top-16 z-20 flex flex-col items-center bg-white border border-[#E5E5EA]/70 rounded-2xl shadow-quiet-card p-1.5 space-y-1 select-none">
       {tools.map((item) => {
         const isActive = activeTool === item.tool;
         return (
@@ -52,8 +52,8 @@ export const Toolbar: React.FC = () => {
             aria-label={`${item.label} (${item.shortcut})`}
             onClick={() => setActiveTool(item.tool)}
             className={`w-9 h-9 rounded-xl flex items-center justify-center transition relative group ${isActive
-              ? 'bg-blue-100/70 text-blue-600 font-semibold shadow-2xs'
-              : 'text-neutral-500 hover:bg-neutral-100 hover:text-neutral-900'
+              ? 'bg-[#E1E8F5] text-[#4F6BA6] font-semibold shadow-2xs'
+              : 'text-neutral-500 hover:bg-[#F5F5F7] hover:text-neutral-900'
               }`}
           >
             {item.icon}
@@ -72,8 +72,8 @@ export const Toolbar: React.FC = () => {
         <div className="pt-1.5 border-t border-neutral-200 mt-1 flex flex-col space-y-1">
           {(
             [
-              { type: 'mountain', label: 'M (Red)', color: 'bg-red-500 text-white' },
-              { type: 'valley', label: 'V (Blue)', color: 'bg-blue-600 text-white' },
+              { type: 'mountain', label: 'M (Red)', color: 'bg-[#D75B50] text-white' },
+              { type: 'valley', label: 'V (Blue)', color: 'bg-[#4F6BA6] text-white' },
               { type: 'edge', label: 'E (Edge)', color: 'bg-neutral-800 text-white' },
               { type: 'auxiliary', label: 'A (Aux)', color: 'bg-purple-600 text-white' },
             ] as { type: CreaseType; label: string; color: string }[]

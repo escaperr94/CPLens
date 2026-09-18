@@ -26,6 +26,16 @@ export const DEFAULT_GRID_CONFIG: GridConfig = {
   color: '#3b82f6',
 };
 
+export const ORIGAMI_GRID_PRESETS = [8, 12, 16, 20, 24, 28, 32, 36, 40, 48, 56, 64, 72, 80, 96, 112, 120, 128] as const;
+
+export function getOptimalMajorSubdivisions(divisions: number): number {
+  if (divisions % 8 === 0) return 8;
+  if (divisions % 6 === 0) return 6;
+  if (divisions % 5 === 0) return 5;
+  if (divisions % 4 === 0) return 4;
+  return Math.min(divisions, 4);
+}
+
 /**
  * Transforms normalized paper coordinates to grid-relative coordinates [0, divisionsX] x [0, divisionsY]
  */

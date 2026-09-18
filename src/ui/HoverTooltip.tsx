@@ -24,14 +24,14 @@ export const HoverTooltip: React.FC = () => {
 
   return (
     <div
-      className="pointer-events-none fixed z-50 bg-white rounded-lg shadow-figma-menu border border-neutral-200 p-2.5 w-48 text-[11px] font-sans text-neutral-800 animate-fade-in"
+      className="pointer-events-none fixed z-50 bg-white rounded-xl shadow-quiet-card border border-[#E5E5EA]/70 p-2.5 w-48 text-[11px] font-sans text-neutral-800 animate-fade-in"
       style={{
         left: screenPos.x + 16,
         top: Math.max(50, screenPos.y - 70),
       }}
     >
       <div className="flex items-center justify-between pb-1.5 mb-1.5 border-b border-neutral-100 font-semibold">
-        <span className="text-figma-blue">{hoveredPoint.label}</span>
+        <span className="text-[#4F6BA6]">{hoveredPoint.label}</span>
         <span className="text-[10px] px-1.5 py-0.2 bg-emerald-50 text-emerald-600 rounded font-mono">
           {confPercent}%
         </span>

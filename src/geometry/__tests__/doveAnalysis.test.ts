@@ -66,7 +66,7 @@ it('vectorizes Dove CP and infers grid', () => {
     size: region.width,
   });
   console.log('Dove final creases:', creases.length);
-  expect(grid.n).toBe(32); // or 64
+  expect([32, 64]).toContain(grid.n);
   expect(creases.length).toBeGreaterThan(100);
 });
 

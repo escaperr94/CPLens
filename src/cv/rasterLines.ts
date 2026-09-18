@@ -119,7 +119,7 @@ export interface GridInference {
   isGrid: boolean;
 }
 
-export function analyzeRasterGrid(lines: CreaseLine[], size: number): GridInference {
+export function analyzeRasterGrid(lines: CreaseLine[], size: number, preferredGrid?: number): GridInference {
   const values: number[] = [];
   for (const crease of lines) {
     if (Math.abs(crease.p1.x - crease.p2.x) < 3.5 / size && Math.abs(crease.p1.y - crease.p2.y) > 10 / size) values.push((crease.p1.x + crease.p2.x) / 2);
@@ -129,9 +129,14 @@ export function analyzeRasterGrid(lines: CreaseLine[], size: number): GridInfere
   if (unique.length < 5) {
     return { n: 32, confidence: 0, isGrid: false };
   }
-  const candidates = [8, 12, 16, 20, 24, 32, 40, 48, 64, 96, 128].map(n => {
+  const candidateList = [8, 12, 16, 20, 24, 28, 32, 36, 40, 48, 56, 64, 72, 80, 96, 112, 120, 128];
+  if (preferredGrid && !candidateList.includes(preferredGrid)) {
+    candidateList.push(preferredGrid);
+  }
+  const candidates = candidateList.map(n => {
     const avgResidual = unique.reduce((s, v) => s + Math.abs(v - Math.round(v * n) / n) * size, 0) / unique.length;
-    return { n, avgResidual, score: avgResidual + 0.015 * n };
+    const prefBonus = (preferredGrid === n) ? -0.2 : 0;
+    return { n, avgResidual, score: avgResidual + 0.015 * n + prefBonus };
   }).sort((a, b) => a.score - b.score);
 
   const best = candidates[0];
@@ -140,8 +145,8 @@ export function analyzeRasterGrid(lines: CreaseLine[], size: number): GridInfere
   return { n: best.n, confidence, isGrid };
 }
 
-export function inferRasterGrid(lines: CreaseLine[], size: number): number {
-  return analyzeRasterGrid(lines, size).n;
+export function inferRasterGrid(lines: CreaseLine[], size: number, preferredGrid?: number): number {
+  return analyzeRasterGrid(lines, size, preferredGrid).n;
 }
 
 /**
@@ -150,7 +155,7 @@ export function inferRasterGrid(lines: CreaseLine[], size: number): number {
  */
 export function snapCreasesToOrigamiGrid(lines: CreaseLine[], N: number, size: number): CreaseLine[] {
   const snapped: CreaseLine[] = [];
-
+  const maxTolPx = Math.min(3.8, (size / N) * 0.42);
   for (const c of lines) {
     const dx = c.p2.x - c.p1.x;
     const dy = c.p2.y - c.p1.y;
@@ -163,7 +168,7 @@ export function snapCreasesToOrigamiGrid(lines: CreaseLine[], N: number, size: n
     if (angle < 14 || angle > 166) {
       const midY = (c.p1.y + c.p2.y) / 2;
       const gridY = Math.round(midY * N) / N;
-      if (Math.abs(midY - gridY) * size <= 3.8) {
+      if (Math.abs(midY - gridY) * size <= maxTolPx) {
         const minX = Math.min(c.p1.x, c.p2.x);
         const maxX = Math.max(c.p1.x, c.p2.x);
         const gridX1 = Math.max(0, Math.min(1, Math.round(minX * N) / N));
@@ -184,7 +189,7 @@ export function snapCreasesToOrigamiGrid(lines: CreaseLine[], N: number, size: n
     if (Math.abs(angle - 90) < 14) {
       const midX = (c.p1.x + c.p2.x) / 2;
       const gridX = Math.round(midX * N) / N;
-      if (Math.abs(midX - gridX) * size <= 3.8) {
+      if (Math.abs(midX - gridX) * size <= maxTolPx) {
         const minY = Math.min(c.p1.y, c.p2.y);
         const maxY = Math.max(c.p1.y, c.p2.y);
         const gridY1 = Math.max(0, Math.min(1, Math.round(minY * N) / N));
@@ -205,7 +210,7 @@ export function snapCreasesToOrigamiGrid(lines: CreaseLine[], N: number, size: n
     if (Math.abs(angle - 45) < 14) {
       const midD = (c.p1.y - c.p1.x + c.p2.y - c.p2.x) / 2;
       const gridD = Math.round(midD * N) / N;
-      if (Math.abs(midD - gridD) * size <= 3.8) {
+      if (Math.abs(midD - gridD) * size <= maxTolPx) {
         const minX = Math.min(c.p1.x, c.p2.x);
         const maxX = Math.max(c.p1.x, c.p2.x);
         const gX1 = Math.max(0, Math.min(1, Math.round(minX * N) / N));
@@ -228,7 +233,7 @@ export function snapCreasesToOrigamiGrid(lines: CreaseLine[], N: number, size: n
     if (Math.abs(angle - 135) < 14) {
       const midS = (c.p1.y + c.p1.x + c.p2.y + c.p2.x) / 2;
       const gridS = Math.round(midS * N) / N;
-      if (Math.abs(midS - gridS) * size <= 3.8) {
+      if (Math.abs(midS - gridS) * size <= maxTolPx) {
         const minX = Math.min(c.p1.x, c.p2.x);
         const maxX = Math.max(c.p1.x, c.p2.x);
         const gX1 = Math.max(0, Math.min(1, Math.round(minX * N) / N));

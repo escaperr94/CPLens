@@ -420,9 +420,14 @@ export function extractCreasesFromLattice(
  * 6. Computing intersections
  * 7. Recovering reference points
  */
+export interface AnalysisOptions {
+  gridHint?: number;
+}
+
 export async function analyzePixels(
   data: Uint8ClampedArray, width: number, height: number,
-  onProgress?: PipelineProgressCallback
+  onProgress?: PipelineProgressCallback,
+  options?: AnalysisOptions
 ): Promise<PipelineResult> {
   // Step 1: Detecting CP region...
   onProgress?.('Detecting CP region...', 15);
@@ -450,7 +455,7 @@ export async function analyzePixels(
 
   const size = Math.max(region.width, region.height);
   const rawLines = extractRasterLines(data, width, height, region);
-  const gridInfo = analyzeRasterGrid(rawLines, size);
+  const gridInfo = analyzeRasterGrid(rawLines, size, options?.gridHint);
   const N = gridInfo.n;
 
   const processedLines = gridInfo.isGrid

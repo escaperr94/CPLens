@@ -28,6 +28,7 @@ interface TopNavProps {
   onLoadCP: () => void;
   onLoadDove: () => void;
   onLoadSchwarz: () => void;
+  onOpenLanding?: () => void;
 }
 
 export const TopNav: React.FC<TopNavProps> = ({
@@ -36,6 +37,7 @@ export const TopNav: React.FC<TopNavProps> = ({
   onLoadCP,
   onLoadDove,
   onLoadSchwarz,
+  onOpenLanding,
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const jsonInputRef = useRef<HTMLInputElement>(null);
@@ -271,6 +273,17 @@ export const TopNav: React.FC<TopNavProps> = ({
             {modKey}K
           </kbd>
         </button>
+
+        {onOpenLanding && (
+          <button
+            onClick={onOpenLanding}
+            className="flex items-center space-x-1.5 px-3 py-1 bg-white hover:bg-[#E1E8F5] border border-[#E5E5EA] text-[#4F6BA6] rounded-xl text-xs font-medium shadow-2xs transition cursor-pointer"
+            title="View Quiet Premium Landing & Waitlist"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-[#4F6BA6]" />
+            <span>Overview</span>
+          </button>
+        )}
       </div>
 
       {/* Right Section: Snap: ON, Loupe, 56% dropdown, Export solid blue */}
@@ -279,7 +292,7 @@ export const TopNav: React.FC<TopNavProps> = ({
         <button
           onClick={toggleSnapping}
           className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-xl text-xs font-medium transition shadow-2xs ${snappingEnabled
-            ? 'bg-blue-50 text-blue-600 border border-blue-200'
+            ? 'bg-[#E1E8F5] text-[#4F6BA6] border border-[#4F6BA6]/30'
             : 'bg-white text-neutral-500 border border-neutral-200 hover:bg-neutral-50'
             }`}
           title="Toggle Snapping (S)"
@@ -350,7 +363,7 @@ export const TopNav: React.FC<TopNavProps> = ({
         <div className="relative">
           <button
             onClick={() => setShowExportMenu(!showExportMenu)}
-            className="flex items-center space-x-1.5 px-3.5 py-1.5 bg-[#0D99FF] hover:bg-[#008AE6] text-white rounded-xl text-xs font-semibold shadow-sm transition cursor-pointer"
+            className="flex items-center space-x-1.5 px-3.5 py-1.5 bg-[#4F6BA6] hover:bg-[#5D7BB8] text-white rounded-xl text-xs font-semibold shadow-quiet-button transition cursor-pointer"
           >
             <Download className="w-3.5 h-3.5" />
             <span>Export</span>

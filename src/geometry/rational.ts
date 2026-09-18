@@ -191,7 +191,7 @@ export function getFractionCandidates(
   }
 
   // Try continued fractions with varying denominators
-  for (const maxD of [8, 12, 16, 24, 32, 48, 64]) {
+  for (const maxD of [8, 12, 16, 20, 24, 28, 32, 40, 48, 56, 64, 72, 80, 96, 112, 120, 128]) {
     if (maxD <= maxDenominator) {
       const cf = approximateContinuedFraction(value, maxD);
       if (!seen.has(cf.formatted)) {
@@ -219,7 +219,7 @@ export function formatGridFraction(
   const gridExpected = gridIndex / div;
 
   // If close to a grid line (tolerance ~10% of a grid cell or min 0.004)
-  const tol = Math.min(0.005, 0.2 / div);
+  const tol = Math.min(0.005, 0.25 / div);
   if (Math.abs(value - gridExpected) <= tol) {
     return `${gridIndex}/${div}`;
   }

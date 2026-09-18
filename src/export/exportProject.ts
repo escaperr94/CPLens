@@ -62,15 +62,17 @@ export function exportOriOrCpFile(state: ProjectState, extension: 'cp' | 'ori' =
  * Exports reference points as CSV
  */
 export function exportPointsCsv(state: ProjectState) {
+  const divX = state.grid.divisionsX || 32;
+  const divY = state.grid.divisionsY || 32;
   const rows = [
-    ['Label', 'x_normalized', 'y_normalized', 'x_fraction', 'y_fraction', 'grid_32_x', 'grid_32_y'],
+    ['Label', 'x_normalized', 'y_normalized', 'x_fraction', 'y_fraction', `grid_${divX}_x`, `grid_${divY}_y`],
   ];
 
   for (const p of state.points) {
-    const fx = approximateFraction(p.x, { maxDenominator: state.grid.divisionsX || 32 });
-    const fy = approximateFraction(p.y, { maxDenominator: state.grid.divisionsY || 32 });
-    const gx = Math.round(p.x * state.grid.divisionsX);
-    const gy = Math.round(p.y * state.grid.divisionsY);
+    const fx = approximateFraction(p.x, { maxDenominator: divX });
+    const fy = approximateFraction(p.y, { maxDenominator: divY });
+    const gx = Math.round(p.x * divX);
+    const gy = Math.round(p.y * divY);
     rows.push([p.label, p.x.toFixed(6), p.y.toFixed(6), fx.formatted, fy.formatted, `${gx}`, `${gy}`]);
   }
 

@@ -12,6 +12,9 @@ import {
 } from 'lucide-react';
 import { useAppStore } from '../store/projectStore';
 import { exportProjectJson, exportSvg, exportPointsCsv } from '../export/exportProject';
+import { snapCreasesToOrigamiGrid } from '../cv/rasterLines';
+import { splitCreaseJunctions } from '../geometry/mountainValley';
+import { approximateFraction } from '../geometry/rational';
 
 interface CommandPaletteProps {
   isOpen: boolean;
@@ -20,6 +23,7 @@ interface CommandPaletteProps {
   onLoadCP: () => void;
   onLoadDove: () => void;
   onLoadSchwarz: () => void;
+  onOpenLanding?: () => void;
 }
 
 export const CommandPalette: React.FC<CommandPaletteProps> = ({
@@ -29,6 +33,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
   onLoadCP,
   onLoadDove,
   onLoadSchwarz,
+  onOpenLanding,
 }) => {
   const [query, setQuery] = useState('');
 
@@ -155,12 +160,12 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
       },
     },
     {
-      id: 'grid_64',
-      label: 'Set Grid to 64 × 64',
-      category: 'Grid',
-      icon: <Grid className="w-4 h-4 text-figma-blue" />,
+      id: 'open_landing',
+      label: 'View Quiet Premium Overview & Waitlist',
+      category: 'View',
+      icon: <Sparkles className="w-4 h-4 text-[#4F6BA6]" />,
       run: () => {
-        setGridConfig({ divisionsX: 64, divisionsY: 64, majorSubdivisions: 8 });
+        onOpenLanding?.();
         onClose();
       },
     },
@@ -168,9 +173,106 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
       id: 'grid_32',
       label: 'Set Grid to 32 × 32',
       category: 'Grid',
-      icon: <Grid className="w-4 h-4 text-figma-blue" />,
+      icon: <Grid className="w-4 h-4 text-[#4F6BA6]" />,
       run: () => {
         setGridConfig({ divisionsX: 32, divisionsY: 32, majorSubdivisions: 8 });
+        onClose();
+      },
+    },
+    {
+      id: 'grid_48',
+      label: 'Set Grid to 48 × 48',
+      category: 'Grid',
+      icon: <Grid className="w-4 h-4 text-figma-blue" />,
+      run: () => {
+        setGridConfig({ divisionsX: 48, divisionsY: 48, majorSubdivisions: 8 });
+        onClose();
+      },
+    },
+    {
+      id: 'grid_56',
+      label: 'Set Grid to 56 × 56 (Kamiya Box-Pleat)',
+      category: 'Grid',
+      icon: <Grid className="w-4 h-4 text-figma-blue" />,
+      run: () => {
+        setGridConfig({ divisionsX: 56, divisionsY: 56, majorSubdivisions: 8 });
+        onClose();
+      },
+    },
+    {
+      id: 'grid_64',
+      label: 'Set Grid to 64 × 64',
+      category: 'Grid',
+      icon: <Grid className="w-4 h-4 text-[#4F6BA6]" />,
+      run: () => {
+        setGridConfig({ divisionsX: 64, divisionsY: 64, majorSubdivisions: 8 });
+        onClose();
+      },
+    },
+    {
+      id: 'grid_80',
+      label: 'Set Grid to 80 × 80 (Dense Box-Pleat)',
+      category: 'Grid',
+      icon: <Grid className="w-4 h-4 text-[#4F6BA6]" />,
+      run: () => {
+        setGridConfig({ divisionsX: 80, divisionsY: 80, majorSubdivisions: 8 });
+        onClose();
+      },
+    },
+    {
+      id: 'grid_96',
+      label: 'Set Grid to 96 × 96',
+      category: 'Grid',
+      icon: <Grid className="w-4 h-4 text-[#4F6BA6]" />,
+      run: () => {
+        setGridConfig({ divisionsX: 96, divisionsY: 96, majorSubdivisions: 8 });
+        onClose();
+      },
+    },
+    {
+      id: 'grid_128',
+      label: 'Set Grid to 128 × 128',
+      category: 'Grid',
+      icon: <Grid className="w-4 h-4 text-[#4F6BA6]" />,
+      run: () => {
+        setGridConfig({ divisionsX: 128, divisionsY: 128, majorSubdivisions: 8 });
+        onClose();
+      },
+    },
+    {
+      id: 'snap_to_grid',
+      label: 'Align / Snap Creases to Current Grid',
+      category: 'Grid',
+      icon: <Magnet className="w-4 h-4 text-[#4F6BA6]" />,
+      run: () => {
+        const { creases, points, grid, pushHistory } = useAppStore.getState();
+        if (creases.length || points.length) {
+          pushHistory();
+          const N = grid.divisionsX;
+          const size = 1000;
+          const snapped = snapCreasesToOrigamiGrid(creases, N, size);
+          const split = splitCreaseJunctions(snapped, {
+            tolerance: 3.5 / size,
+            gridN: N,
+            size,
+          });
+          const updatedPoints = points.map((p) => {
+            const gx = Math.round(p.x * N) / N;
+            const gy = Math.round(p.y * N) / N;
+            const px = Math.abs(p.x - gx) <= 3.5 / size ? gx : p.x;
+            const py = Math.abs(p.y - gy) <= 3.5 / size ? gy : p.y;
+            return {
+              ...p,
+              x: px,
+              y: py,
+              xRaw: Number(px.toFixed(5)),
+              yRaw: Number(py.toFixed(5)),
+              xGrid: approximateFraction(px, { maxDenominator: N }),
+              yGrid: approximateFraction(py, { maxDenominator: N }),
+            };
+          });
+          useAppStore.setState({ creases: split, points: updatedPoints });
+        }
         onClose();
       },
     },
@@ -217,7 +319,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
       onClick={onClose}
     >
       <div
-        className="w-[500px] max-w-[90vw] bg-white rounded-2xl shadow-figma-menu border border-neutral-200 overflow-hidden"
+        className="w-[500px] max-w-[90vw] bg-white rounded-2xl shadow-quiet-card border border-[#E5E5EA]/70 overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Search header */}

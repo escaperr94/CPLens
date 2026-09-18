@@ -1,6 +1,6 @@
-import type { PipelineResult, PipelineProgressCallback } from './pipeline';
+import type { PipelineResult, PipelineProgressCallback, AnalysisOptions } from './pipeline';
 
-export function runCPAnalysisPipeline(canvas: HTMLCanvasElement, onProgress?: PipelineProgressCallback, signal?: AbortSignal): Promise<PipelineResult> {
+export function runCPAnalysisPipeline(canvas: HTMLCanvasElement, onProgress?: PipelineProgressCallback, signal?: AbortSignal, options?: AnalysisOptions): Promise<PipelineResult> {
   const ctx = canvas.getContext('2d');
   if (!ctx) return Promise.reject(new Error('Canvas unavailable'));
   const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height);
@@ -15,6 +15,6 @@ export function runCPAnalysisPipeline(canvas: HTMLCanvasElement, onProgress?: Pi
       else { dispose(); message.error ? reject(new Error(message.error)) : resolve(message.result); }
     };
     worker.onerror = (event) => { dispose(); reject(new Error(event.message)); };
-    worker.postMessage({ data, width: canvas.width, height: canvas.height }, [data.buffer]);
+    worker.postMessage({ data, width: canvas.width, height: canvas.height, options }, [data.buffer]);
   });
 }

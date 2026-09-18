@@ -4,7 +4,7 @@ export interface GridCandidate {
   score: number;
 }
 
-const COMMON_GRID_SIZES = [8, 12, 16, 20, 24, 32, 40, 48, 64, 96, 128];
+export const COMMON_GRID_SIZES = [8, 12, 16, 20, 24, 28, 32, 36, 40, 48, 56, 64, 72, 80, 96, 112, 120, 128];
 
 /**
  * Analyzes a rectified canvas to estimate likely origami grid subdivisions
@@ -96,9 +96,10 @@ export function analyzeGridCandidates(
   const range = maxScore - minScore || 1;
 
   for (const r of results) {
-    // Origami power of two prior bonus
+    // Origami power of two and multiple prior bonus
     const isPow2 = (r.divisions & (r.divisions - 1)) === 0;
-    const prior = isPow2 ? 1.1 : 1.0;
+    const isOrigamiMultiple = r.divisions % 8 === 0 || r.divisions % 6 === 0;
+    const prior = isPow2 ? 1.1 : isOrigamiMultiple ? 1.05 : 1.0;
     const rawConf = ((r.score - minScore) / range) * prior;
     r.confidence = Math.min(0.98, Math.max(0.15, Number((rawConf * 0.7 + 0.25).toFixed(2))));
   }

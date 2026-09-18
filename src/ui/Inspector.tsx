@@ -10,12 +10,18 @@ import {
   Sliders,
   ChevronDown,
   Sparkles,
+  Magnet,
+  Link2,
+  Link2Off,
 } from 'lucide-react';
 import { useAppStore } from '../store/projectStore';
 import { approximateFraction, getFractionCandidates } from '../geometry/rational';
 import { CreaseType, lineFromPoints, lineAngle, matchOrigamiAngle } from '../geometry/line';
 import { distance } from '../geometry/point';
 import { findCreaseIntersections } from '../geometry/intersection';
+import { getOptimalMajorSubdivisions } from '../geometry/grid';
+import { snapCreasesToOrigamiGrid } from '../cv/rasterLines';
+import { splitCreaseJunctions } from '../geometry/mountainValley';
 
 interface InspectorProps {
   onRunAutoAnalysis: () => void;
@@ -24,6 +30,9 @@ interface InspectorProps {
 export const Inspector: React.FC<InspectorProps> = ({ onRunAutoAnalysis }) => {
   const [maxDenom, setMaxDenom] = useState<number>(64);
   const [activeTab, setActiveTab] = useState<'selection' | 'grid' | 'layers'>('selection');
+  const [linkDivisions, setLinkDivisions] = useState<boolean>(true);
+  const [draftDivX, setDraftDivX] = useState<string>('64');
+  const [draftDivY, setDraftDivY] = useState<string>('64');
 
   const {
     cursorPaper,
@@ -59,6 +68,99 @@ export const Inspector: React.FC<InspectorProps> = ({ onRunAutoAnalysis }) => {
   useEffect(() => { if (selectedPointId || selectedCreaseId || selectedMeasurementId) setActiveTab('selection'); }, [selectedPointId, selectedCreaseId, selectedMeasurementId]);
 
   const hasSelection = !!(selectedPoint || selectedCrease || selectedMeasurement);
+  const handleSnapCreasesToCurrentGrid = () => {
+    const { creases, points, grid, pushHistory } = useAppStore.getState();
+    if (!creases.length && !points.length) return;
+    pushHistory();
+    const N = grid.divisionsX;
+    const size = 1000; // normalized unit size
+    const snapped = snapCreasesToOrigamiGrid(creases, N, size);
+    const split = splitCreaseJunctions(snapped, {
+      tolerance: 3.5 / size,
+      gridN: N,
+      size,
+    });
+    const updatedPoints = points.map((p) => {
+      const gx = Math.round(p.x * N) / N;
+      const gy = Math.round(p.y * N) / N;
+      const px = Math.abs(p.x - gx) <= 3.5 / size ? gx : p.x;
+      const py = Math.abs(p.y - gy) <= 3.5 / size ? gy : p.y;
+      return {
+        ...p,
+        x: px,
+        y: py,
+        xRaw: Number(px.toFixed(5)),
+        yRaw: Number(py.toFixed(5)),
+        xGrid: approximateFraction(px, { maxDenominator: N }),
+        yGrid: approximateFraction(py, { maxDenominator: N }),
+      };
+    });
+    useAppStore.setState({ creases: split, points: updatedPoints });
+  };
+  useEffect(() => {
+    setDraftDivX(String(grid.divisionsX));
+  }, [grid.divisionsX]);
+
+  useEffect(() => {
+    setDraftDivY(String(grid.divisionsY));
+  }, [grid.divisionsY]);
+
+  const commitDivX = (valStr: string) => {
+    const val = parseInt(valStr, 10);
+    if (!isNaN(val) && val >= 1 && val <= 512) {
+      if (linkDivisions) {
+        setGridConfig({
+          divisionsX: val,
+          divisionsY: val,
+          majorSubdivisions: getOptimalMajorSubdivisions(val),
+        });
+        setDraftDivX(String(val));
+        setDraftDivY(String(val));
+      } else {
+        setGridConfig({
+          divisionsX: val,
+          majorSubdivisions: getOptimalMajorSubdivisions(val),
+        });
+        setDraftDivX(String(val));
+      }
+    } else {
+      setDraftDivX(String(grid.divisionsX));
+    }
+  };
+
+  const commitDivY = (valStr: string) => {
+    const val = parseInt(valStr, 10);
+    if (!isNaN(val) && val >= 1 && val <= 512) {
+      if (linkDivisions) {
+        setGridConfig({
+          divisionsX: val,
+          divisionsY: val,
+          majorSubdivisions: getOptimalMajorSubdivisions(val),
+        });
+        setDraftDivX(String(val));
+        setDraftDivY(String(val));
+      } else {
+        setGridConfig({
+          divisionsY: val,
+          majorSubdivisions: getOptimalMajorSubdivisions(val),
+        });
+        setDraftDivY(String(val));
+      }
+    } else {
+      setDraftDivY(String(grid.divisionsY));
+    }
+  };
+
+  const stepDivX = (delta: number) => {
+    const next = Math.max(1, Math.min(512, grid.divisionsX + delta));
+    commitDivX(String(next));
+  };
+
+  const stepDivY = (delta: number) => {
+    const next = Math.max(1, Math.min(512, grid.divisionsY + delta));
+    commitDivY(String(next));
+  };
+
 
   // Focus coordinate for live inspector
   const targetCoord = selectedPoint ? { x: selectedPoint.x, y: selectedPoint.y } : cursorPaper;
@@ -66,27 +168,48 @@ export const Inspector: React.FC<InspectorProps> = ({ onRunAutoAnalysis }) => {
   const lastTarget = useRef({x:0.5,y:0.5});
   if(targetCoord) lastTarget.current=targetCoord;
 
-  const fracX = targetCoord
-    ? approximateFraction(targetCoord.x, { maxDenominator: maxDenom, preferPowerOfTwo: true })
-    : null;
-  const fracY = targetCoord
-    ? approximateFraction(targetCoord.y, { maxDenominator: maxDenom, preferPowerOfTwo: true })
-    : null;
+  // High-performance memoized coordinate fraction calculation (only runs when selection tab is active)
+  const roundedCoord = useMemo(() => {
+    if (!targetCoord) return null;
+    return {
+      x: Math.round(targetCoord.x * 10000) / 10000,
+      y: Math.round(targetCoord.y * 10000) / 10000,
+    };
+  }, [targetCoord?.x, targetCoord?.y]);
 
-  const candidatesX = targetCoord ? getFractionCandidates(targetCoord.x, maxDenom) : [];
-  const candidatesY = targetCoord ? getFractionCandidates(targetCoord.y, maxDenom) : [];
+  const fracX = useMemo(() => {
+    return roundedCoord
+      ? approximateFraction(roundedCoord.x, { maxDenominator: maxDenom, preferPowerOfTwo: true })
+      : null;
+  }, [roundedCoord?.x, maxDenom]);
+
+  const fracY = useMemo(() => {
+    return roundedCoord
+      ? approximateFraction(roundedCoord.y, { maxDenominator: maxDenom, preferPowerOfTwo: true })
+      : null;
+  }, [roundedCoord?.y, maxDenom]);
+
+  const candidatesX = useMemo(() => {
+    if (activeTab !== 'selection' || !roundedCoord) return [];
+    return getFractionCandidates(roundedCoord.x, maxDenom);
+  }, [activeTab, roundedCoord?.x, maxDenom]);
+
+  const candidatesY = useMemo(() => {
+    if (activeTab !== 'selection' || !roundedCoord) return [];
+    return getFractionCandidates(roundedCoord.y, maxDenom);
+  }, [activeTab, roundedCoord?.y, maxDenom]);
 
   const intersections = useMemo(() => findCreaseIntersections(creases), [creases]);
 
   return (
-    <aside className="w-[280px] bg-white border border-neutral-200/80 rounded-2xl shadow-[0_4px_24px_rgba(0,0,0,0.06)] m-3 flex flex-col text-xs text-neutral-800 select-none z-20 overflow-hidden">
-      {/* Top Segmented Tabs (matching media_1789408992098.png) */}
+    <aside className="w-[280px] bg-white border border-[#E5E5EA]/70 rounded-2xl shadow-quiet-card m-3 flex flex-col text-xs text-[#1D1D1F] select-none z-20 overflow-hidden">
+      {/* Top Segmented Tabs */}
       <div className="p-3 pb-0">
-        <div className="bg-neutral-100/80 p-1 rounded-xl flex items-center space-x-1">
+        <div className="bg-[#F5F5F7] p-1 rounded-xl flex items-center space-x-1 border border-[#E5E5EA]/40">
           <button
             onClick={() => setActiveTab('selection')}
             className={`flex-1 py-1.5 text-center text-xs font-medium rounded-lg transition ${activeTab === 'selection'
-              ? 'bg-blue-100/80 text-blue-600 font-semibold shadow-2xs'
+              ? 'bg-[#E1E8F5] text-[#4F6BA6] font-semibold shadow-2xs'
               : 'text-neutral-500 hover:text-neutral-900'
               }`}
           >
@@ -95,7 +218,7 @@ export const Inspector: React.FC<InspectorProps> = ({ onRunAutoAnalysis }) => {
           <button
             onClick={() => setActiveTab('grid')}
             className={`flex-1 py-1.5 text-center text-xs font-medium rounded-lg transition ${activeTab === 'grid'
-              ? 'bg-blue-100/80 text-blue-600 font-semibold shadow-2xs'
+              ? 'bg-[#E1E8F5] text-[#4F6BA6] font-semibold shadow-2xs'
               : 'text-neutral-500 hover:text-neutral-900'
               }`}
           >
@@ -104,7 +227,7 @@ export const Inspector: React.FC<InspectorProps> = ({ onRunAutoAnalysis }) => {
           <button
             onClick={() => setActiveTab('layers')}
             className={`flex-1 py-1.5 text-center text-xs font-medium rounded-lg transition ${activeTab === 'layers'
-              ? 'bg-blue-100/80 text-blue-600 font-semibold shadow-2xs'
+              ? 'bg-[#E1E8F5] text-[#4F6BA6] font-semibold shadow-2xs'
               : 'text-neutral-500 hover:text-neutral-900'
               }`}
           >
@@ -381,7 +504,7 @@ export const Inspector: React.FC<InspectorProps> = ({ onRunAutoAnalysis }) => {
                   <button
                     onClick={onRunAutoAnalysis}
                     disabled={isAnalyzing || !image.url}
-                    className="w-full py-1.5 bg-figma-blue hover:bg-figma-blueHover text-white rounded-lg font-medium text-xs shadow-sm transition flex items-center justify-center space-x-1.5 disabled:opacity-40"
+                    className="w-full py-2 bg-[#4F6BA6] hover:bg-[#5D7BB8] text-white rounded-xl font-medium text-xs shadow-quiet-button transition flex items-center justify-center space-x-1.5 disabled:opacity-40 cursor-pointer"
                   >
                     <Sparkles className="w-3.5 h-3.5" />
                     <span>Re-Analyze & Vectorize CP</span>
@@ -397,11 +520,15 @@ export const Inspector: React.FC<InspectorProps> = ({ onRunAutoAnalysis }) => {
                     <select
                       value={maxDenom}
                       onChange={(e) => setMaxDenom(Number(e.target.value))}
-                      className="bg-neutral-50 border border-neutral-200 rounded px-1.5 py-0.5 text-[10px] font-mono text-figma-blue outline-none"
+                      className="bg-[#F5F5F7] border border-[#E5E5EA] rounded-lg px-2 py-0.5 text-[10px] font-mono text-[#4F6BA6] outline-none shadow-2xs cursor-pointer"
                     >
                       <option value={16}>max /16</option>
                       <option value={32}>max /32</option>
+                      <option value={48}>max /48</option>
+                      <option value={56}>max /56</option>
                       <option value={64}>max /64</option>
+                      <option value={80}>max /80</option>
+                      <option value={96}>max /96</option>
                       <option value={128}>max /128</option>
                       <option value={256}>max /256</option>
                     </select>
@@ -504,7 +631,7 @@ export const Inspector: React.FC<InspectorProps> = ({ onRunAutoAnalysis }) => {
                 </div>
               </div>
               <div className="grid grid-cols-4 gap-1.5">
-                {[8, 16, 24, 32, 40, 48, 64, 128].map((n) => {
+                {[8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128].map((n) => {
                   const isSelected = grid.divisionsX === n && grid.divisionsY === n;
                   return (
                     <button
@@ -513,11 +640,11 @@ export const Inspector: React.FC<InspectorProps> = ({ onRunAutoAnalysis }) => {
                         setGridConfig({
                           divisionsX: n,
                           divisionsY: n,
-                          majorSubdivisions: n >= 16 ? 8 : 4,
+                          majorSubdivisions: n % 8 === 0 ? 8 : 4,
                         })
                       }
                       className={`py-2 rounded-xl font-mono text-xs text-center transition border shadow-2xs ${isSelected
-                        ? 'bg-blue-100/80 border-blue-300 text-blue-600 font-semibold'
+                        ? 'bg-[#E1E8F5] border-[#7C95C8]/50 text-[#4F6BA6] font-semibold'
                         : 'bg-white border-neutral-200 hover:bg-neutral-50 text-neutral-700'
                         }`}
                     >
@@ -526,7 +653,17 @@ export const Inspector: React.FC<InspectorProps> = ({ onRunAutoAnalysis }) => {
                   );
                 })}
               </div>
-            </div>
+
+              <button
+                type="button"
+                onClick={handleSnapCreasesToCurrentGrid}
+                className="w-full mt-2.5 py-2 px-3 bg-white hover:bg-[#E1E8F5] text-neutral-700 hover:text-[#4F6BA6] border border-[#E5E5EA] hover:border-[#7C95C8]/50 rounded-xl font-medium text-xs shadow-2xs transition flex items-center justify-center space-x-1.5 cursor-pointer"
+                title="Align all creases to current grid"
+              >
+                <Magnet className="w-3.5 h-3.5 text-[#4F6BA6]" />
+                <span>Align Creases to Grid ({grid.divisionsX} × {grid.divisionsY})</span>
+              </button>
+              </div>
 
             {/* 2. Grid Overlay Controls */}
             <div className="bg-neutral-50/70 p-3 rounded-xl border border-neutral-200/80 space-y-3">
@@ -535,53 +672,172 @@ export const Inspector: React.FC<InspectorProps> = ({ onRunAutoAnalysis }) => {
                 <button
                   type="button"
                   onClick={() => setGridConfig({ enabled: !grid.enabled })}
-                  className={`w-9 h-5 flex items-center rounded-full p-0.5 transition ${grid.enabled ? 'bg-[#0D99FF] justify-end' : 'bg-neutral-300 justify-start'
+                  className={`w-9 h-5 flex items-center rounded-full p-0.5 transition cursor-pointer ${grid.enabled ? 'bg-[#4F6BA6] justify-end' : 'bg-neutral-300 justify-start'
                     }`}
                 >
                   <div className="w-4 h-4 rounded-full bg-white shadow-xs" />
                 </button>
               </div>
 
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="text-[11px] text-neutral-400 block mb-1">Divisions X</label>
-                  <div className="flex items-center justify-between bg-white border border-neutral-200 rounded-xl px-2.5 py-1.5 shadow-2xs">
-                    <span className="font-mono text-xs text-neutral-800 font-medium">{grid.divisionsX}</span>
-                    <div className="flex flex-col space-y-0.5 text-[9px] text-neutral-400 leading-none">
-                      <button
-                        onClick={() => setGridConfig({ divisionsX: Math.min(256, grid.divisionsX + 1) })}
-                        className="hover:text-neutral-700 cursor-pointer"
-                      >
-                        ▲
-                      </button>
-                      <button
-                        onClick={() => setGridConfig({ divisionsX: Math.max(1, grid.divisionsX - 1) })}
-                        className="hover:text-neutral-700 cursor-pointer"
-                      >
-                        ▼
-                      </button>
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-medium text-neutral-600">Lattice Divisions</span>
+                  <button
+                    type="button"
+                    onClick={() => setLinkDivisions(!linkDivisions)}
+                    className={`flex items-center space-x-1 px-2 py-0.5 rounded-lg text-[10px] font-medium transition cursor-pointer ${
+                      linkDivisions
+                        ? 'bg-blue-50 text-blue-600 border border-blue-200 shadow-2xs'
+                        : 'bg-neutral-100 text-neutral-500 border border-neutral-200'
+                    }`}
+                    title={linkDivisions ? 'X and Y locked together (Square grid)' : 'X and Y independent'}
+                  >
+                    {linkDivisions ? <Link2 className="w-3 h-3 text-blue-500" /> : <Link2Off className="w-3 h-3 text-neutral-400" />}
+                    <span>{linkDivisions ? '1:1 Locked' : 'Independent'}</span>
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-[10px] text-neutral-400 block mb-1">Divisions X</label>
+                    <div className="flex items-center justify-between bg-white border border-neutral-200 rounded-xl px-2.5 py-1.5 shadow-2xs focus-within:border-blue-400 focus-within:ring-1 focus-within:ring-blue-100 transition">
+                      <input
+                        type="number"
+                        min={1}
+                        max={512}
+                        value={draftDivX}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setDraftDivX(v);
+                          if (linkDivisions) setDraftDivY(v);
+                          const val = parseInt(v, 10);
+                          if (!isNaN(val) && val >= 1 && val <= 512) {
+                            if (linkDivisions) {
+                              setGridConfig({
+                                divisionsX: val,
+                                divisionsY: val,
+                                majorSubdivisions: getOptimalMajorSubdivisions(val),
+                              });
+                            } else {
+                              setGridConfig({
+                                divisionsX: val,
+                                majorSubdivisions: getOptimalMajorSubdivisions(val),
+                              });
+                            }
+                          }
+                        }}
+                        onBlur={() => {
+                          const val = parseInt(draftDivX, 10);
+                          if (isNaN(val) || val < 1 || val > 512) {
+                            setDraftDivX(String(grid.divisionsX));
+                            if (linkDivisions) setDraftDivY(String(grid.divisionsY));
+                          }
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            (e.target as HTMLInputElement).blur();
+                          }
+                        }}
+                        className="w-full font-mono text-xs text-neutral-800 font-medium bg-transparent outline-none border-none p-0 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                      />
+                      <div className="flex flex-col space-y-0.5 text-[9px] text-neutral-400 leading-none ml-1">
+                        <button
+                          type="button"
+                          onClick={() => stepDivX(1)}
+                          className="hover:text-neutral-700 cursor-pointer"
+                          title="Increase divisions X"
+                        >
+                          ▲
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => stepDivX(-1)}
+                          className="hover:text-neutral-700 cursor-pointer"
+                          title="Decrease divisions X"
+                        >
+                          ▼
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] text-neutral-400 block mb-1">Divisions Y</label>
+                    <div className="flex items-center justify-between bg-white border border-neutral-200 rounded-xl px-2.5 py-1.5 shadow-2xs focus-within:border-blue-400 focus-within:ring-1 focus-within:ring-blue-100 transition">
+                      <input
+                        type="number"
+                        min={1}
+                        max={512}
+                        value={draftDivY}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setDraftDivY(v);
+                          if (linkDivisions) setDraftDivX(v);
+                          const val = parseInt(v, 10);
+                          if (!isNaN(val) && val >= 1 && val <= 512) {
+                            if (linkDivisions) {
+                              setGridConfig({
+                                divisionsX: val,
+                                divisionsY: val,
+                                majorSubdivisions: getOptimalMajorSubdivisions(val),
+                              });
+                            } else {
+                              setGridConfig({
+                                divisionsY: val,
+                                majorSubdivisions: getOptimalMajorSubdivisions(val),
+                              });
+                            }
+                          }
+                        }}
+                        onBlur={() => {
+                          const val = parseInt(draftDivY, 10);
+                          if (isNaN(val) || val < 1 || val > 512) {
+                            setDraftDivY(String(grid.divisionsY));
+                            if (linkDivisions) setDraftDivX(String(grid.divisionsX));
+                          }
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            (e.target as HTMLInputElement).blur();
+                          }
+                        }}
+                        className="w-full font-mono text-xs text-neutral-800 font-medium bg-transparent outline-none border-none p-0 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                      />
+                      <div className="flex flex-col space-y-0.5 text-[9px] text-neutral-400 leading-none ml-1">
+                        <button
+                          type="button"
+                          onClick={() => stepDivY(1)}
+                          className="hover:text-neutral-700 cursor-pointer"
+                          title="Increase divisions Y"
+                        >
+                          ▲
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => stepDivY(-1)}
+                          className="hover:text-neutral-700 cursor-pointer"
+                          title="Decrease divisions Y"
+                        >
+                          ▼
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>
-                <div>
-                  <label className="text-[11px] text-neutral-400 block mb-1">Divisions Y</label>
-                  <div className="flex items-center justify-between bg-white border border-neutral-200 rounded-xl px-2.5 py-1.5 shadow-2xs">
-                    <span className="font-mono text-xs text-neutral-800 font-medium">{grid.divisionsY}</span>
-                    <div className="flex flex-col space-y-0.5 text-[9px] text-neutral-400 leading-none">
-                      <button
-                        onClick={() => setGridConfig({ divisionsY: Math.min(256, grid.divisionsY + 1) })}
-                        className="hover:text-neutral-700 cursor-pointer"
-                      >
-                        ▲
-                      </button>
-                      <button
-                        onClick={() => setGridConfig({ divisionsY: Math.max(1, grid.divisionsY - 1) })}
-                        className="hover:text-neutral-700 cursor-pointer"
-                      >
-                        ▼
-                      </button>
-                    </div>
-                  </div>
+
+                <div className="flex items-center justify-between pt-1">
+                  <span className="text-[10px] text-neutral-500">Major Grid Step</span>
+                  <select
+                    value={grid.majorSubdivisions || 8}
+                    onChange={(e) => setGridConfig({ majorSubdivisions: Number(e.target.value) })}
+                    className="bg-white border border-neutral-200 rounded-lg px-2 py-0.5 text-[10px] font-mono text-neutral-700 outline-none shadow-2xs"
+                  >
+                    <option value={4}>4 sections (/4)</option>
+                    <option value={8}>8 sections (/8)</option>
+                    <option value={10}>10 sections (/10)</option>
+                    <option value={16}>16 sections (/16)</option>
+                    <option value={0}>None</option>
+                  </select>
                 </div>
               </div>
 
@@ -597,7 +853,7 @@ export const Inspector: React.FC<InspectorProps> = ({ onRunAutoAnalysis }) => {
                   step={0.05}
                   value={grid.opacity}
                   onChange={(e) => setGridConfig({ opacity: Number(e.target.value) })}
-                  className="w-full h-1.5 bg-neutral-200 rounded-lg appearance-none cursor-pointer accent-[#0D99FF]"
+                  className="w-full h-1.5 bg-neutral-200 rounded-lg appearance-none cursor-pointer accent-[#4F6BA6]"
                 />
               </div>
 
@@ -645,7 +901,7 @@ export const Inspector: React.FC<InspectorProps> = ({ onRunAutoAnalysis }) => {
                     >
                       <div
                         className={`w-4 h-4 rounded flex items-center justify-center transition border ${item.checked
-                          ? 'bg-[#0D99FF] border-[#0D99FF] text-white shadow-2xs'
+                          ? 'bg-[#4F6BA6] border-[#4F6BA6] text-white shadow-2xs'
                           : 'bg-white border-neutral-300 group-hover:border-neutral-400'
                           }`}
                       >

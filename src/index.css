@@ -3,7 +3,7 @@
 @tailwind utilities;
 
 :root {
-  font-family: -apple-system, BlinkMacSystemFont, "Inter", "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", sans-serif;
   color-scheme: light;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -15,12 +15,13 @@ body {
   width: 100vw;
   height: 100vh;
   overflow: hidden;
-  background-color: #EBEBEB;
-  color: #1E1E1E;
+  background-color: #FAFAFA;
+  color: #1D1D1F;
   user-select: none;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", sans-serif;
 }
 
-/* Figma-like minimal light scrollbars */
+/* Minimal refined light scrollbars */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
@@ -31,17 +32,51 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #D1D1D1;
+  background: #D2D2D7;
   border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #B0B0B0;
+  background: #A1A1A6;
 }
 
-/* Figma input focus styles */
+/* Quiet Premium input focus styles */
 input:focus,
-select:focus {
-  outline: 1.5px solid #0D99FF !important;
+select:focus,
+textarea:focus {
+  outline: 1.5px solid #4F6BA6 !important;
   outline-offset: -1px;
+}
+
+/* Shimmer CTA Action Button */
+.shimmer-button {
+  background: linear-gradient(135deg, #4F6BA6 0%, #5D7BB8 100%);
+  background-size: 200% 100%;
+  transition: all 0.6s ease;
+}
+.shimmer-button:hover {
+  background-position: 100% 0;
+  box-shadow: 0 10px 30px -10px rgba(79, 107, 166, 0.4);
+}
+
+/* Gradient-Border Input */
+.gradient-border-wrapper {
+  padding: 1px;
+  background: linear-gradient(to bottom right, #E5E5EA, #E5E5EA);
+  transition: all 300ms ease;
+}
+.gradient-border-wrapper:hover,
+.gradient-border-wrapper:focus-within {
+  background: linear-gradient(to bottom right, #4F6BA6, #7C95C8);
+}
+
+/* Quiet section divider */
+.quiet-divider {
+  height: 1px;
+  background: linear-gradient(to right, transparent, rgba(210, 210, 215, 0.4), transparent);
+}
+
+/* 1.5s cubic-bezier reveal */
+.reveal-item {
+  transition: all 1.5s cubic-bezier(0.16, 1, 0.3, 1);
 }

@@ -28,7 +28,7 @@ export const StatusBar: React.FC = () => {
   }
 
   return (
-    <footer className="h-8 bg-white/95 backdrop-blur-md border-t border-neutral-200/80 px-4 flex items-center justify-between text-xs text-neutral-500 select-none z-20 shadow-[0_-1px_2px_rgba(0,0,0,0.02)]">
+    <footer className="h-8 bg-white/95 backdrop-blur-md border-t border-[#E5E5EA]/70 px-4 flex items-center justify-between text-xs text-[#86868B] select-none z-20 shadow-[0_-1px_2px_rgba(0,0,0,0.02)]">
       {/* Left: Layers/Crease count, Coordinates, Grid, Snap */}
       <div className="flex items-center space-x-4">
         {/* Layer / Entity count */}
@@ -52,7 +52,7 @@ export const StatusBar: React.FC = () => {
         {/* Grid size */}
         <div className="flex items-center space-x-1 font-mono text-[11px] text-neutral-600">
           <span>grid =</span>
-          <span className="text-neutral-800 font-semibold">{grid.divisionsX} × {grid.divisionsY}</span>
+          <span className="text-[#4F6BA6] font-semibold">{grid.divisionsX} × {grid.divisionsY}</span>
         </div>
 
         <div className="h-3 w-px bg-neutral-200" />
@@ -61,7 +61,7 @@ export const StatusBar: React.FC = () => {
         <div className="flex items-center space-x-1 text-[11px]">
           <span className="text-neutral-500">snap:</span>
           {snappingEnabled ? (
-            <span className="text-emerald-600 font-medium">{snapText}</span>
+            <span className="text-[#4F6BA6] font-medium">{snapText}</span>
           ) : (
             <span className="text-neutral-400">OFF</span>
           )}

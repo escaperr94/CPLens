@@ -89,10 +89,11 @@ export function splitCreaseJunctions(
 
   // 3. Grid snap cluster vertices if within threshold of gridN
   if (gridN && gridN >= 8 && size) {
+    const maxSnapDist = Math.min(2.5, (size / gridN) * 0.4);
     for (const c of clusters) {
       const gx = Math.round(c.x * gridN) / gridN;
       const gy = Math.round(c.y * gridN) / gridN;
-      if (Math.hypot(c.x - gx, c.y - gy) * size <= 2.5) {
+      if (Math.hypot(c.x - gx, c.y - gy) * size <= maxSnapDist) {
         c.x = gx;
         c.y = gy;
       }

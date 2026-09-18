@@ -10,9 +10,9 @@ export const AnalysisModal: React.FC = () => {
 
   return (
     <div className="fixed bottom-12 left-20 z-50 pointer-events-none">
-      <div className="w-[340px] bg-white rounded-2xl shadow-figma-menu border border-neutral-200 p-6 space-y-5">
+      <div className="w-[340px] bg-white rounded-2xl shadow-quiet-card border border-[#E5E5EA]/70 p-6 space-y-5">
         <div className="flex items-center space-x-3">
-          <div className="w-9 h-9 rounded-xl bg-blue-50 text-figma-blue flex items-center justify-center">
+          <div className="w-9 h-9 rounded-xl bg-[#E1E8F5] text-[#4F6BA6] flex items-center justify-center">
             <Sparkles className="w-5 h-5 animate-pulse" />
           </div>
           <div>
@@ -25,7 +25,7 @@ export const AnalysisModal: React.FC = () => {
         <div className="space-y-1.5">
           <div className="w-full bg-neutral-100 rounded-full h-1.5 overflow-hidden">
             <div
-              className="bg-figma-blue h-full rounded-full transition-all duration-300 ease-out"
+              className="bg-[#4F6BA6] h-full rounded-full transition-all duration-300 ease-out"
               style={{ width: `${analysisProgress}%` }}
             />
           </div>
@@ -47,7 +47,7 @@ export const AnalysisToast: React.FC = () => {
   if (!analysisReport || !analysisReport.visible) return null;
 
   return (
-    <div className="fixed bottom-12 right-6 z-40 max-w-xs w-80 bg-white rounded-xl shadow-figma-menu border border-neutral-200 p-4 animate-slide-up">
+    <div className="fixed bottom-12 right-6 z-40 max-w-xs w-80 bg-white rounded-2xl shadow-quiet-card border border-[#E5E5EA]/70 p-4 animate-slide-up">
       <div className="flex items-center justify-between pb-2 border-b border-neutral-100">
         <div className="flex items-center space-x-1.5">
           <span className="w-2 h-2 rounded-full bg-emerald-500" />
@@ -74,7 +74,7 @@ export const AnalysisToast: React.FC = () => {
         <div className="flex items-center text-neutral-700">
           <span className="mr-1.5 text-emerald-500">✓</span> {analysisReport.creaseSegmentsCount} crease segments detected
         </div>
-        <div className="flex items-center text-figma-blue font-semibold">
+        <div className="flex items-center text-[#4F6BA6] font-semibold">
           <span className="mr-1.5">✓</span> Likely base grid: {analysisReport.baseGrid}
         </div>
         <div className="flex items-center text-neutral-700">

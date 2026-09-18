@@ -8,6 +8,7 @@ import { CPStage } from './canvas/CPStage';
 import { HoverTooltip } from './ui/HoverTooltip';
 import { AnalysisModal, AnalysisToast } from './ui/AnalysisModal';
 import { CommandPalette } from './ui/CommandPalette';
+import { QuietLanding } from './ui/QuietLanding';
 import { useShortcuts } from './app/useShortcuts';
 import { useAppStore } from './store/projectStore';
 import { runCPAnalysisPipeline } from './cv/client';
@@ -17,7 +18,7 @@ const SCHWARZ_LANTERN_CP = 'https://upload.wikimedia.org/wikipedia/commons/7/71/
 
 export const App: React.FC = () => {
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
-
+  const [currentView, setCurrentView] = useState<'studio' | 'landing'>('studio');
   useShortcuts({
     onOpenCommandPalette: () => setIsCommandPaletteOpen((prev) => !prev),
   });
@@ -257,21 +258,25 @@ export const App: React.FC = () => {
     }
   };
 
+  if (currentView === 'landing') {
+    return <QuietLanding onEnterStudio={() => setCurrentView('studio')} />;
+  }
+
   return (
     <div
-      className="flex flex-col w-screen h-screen bg-[#F4F5F7] text-neutral-900 overflow-hidden select-none font-sans"
+      className="flex flex-col w-screen h-screen bg-[#FAFAFA] text-[#1D1D1F] overflow-hidden select-none font-sans"
       onDragOver={handleDragOver}
       onDrop={handleDrop}
     >
-      {/* Figma Top Navigation Bar */}
+      {/* Quiet Premium Top Navigation Bar */}
       <TopNav
         onOpenCommandPalette={() => setIsCommandPaletteOpen(true)}
         onRunAutoAnalysis={handleRunAutoAnalysis}
         onLoadCP={handleLoadCP}
         onLoadDove={handleLoadDove}
         onLoadSchwarz={handleLoadSchwarz}
+        onOpenLanding={() => setCurrentView('landing')}
       />
-
       {/* Main Workspace Canvas */}
       <div className="flex flex-1 relative overflow-hidden">
         {/* Floating Figma Toolbar */}
@@ -306,6 +311,7 @@ export const App: React.FC = () => {
         onLoadCP={handleLoadCP}
         onLoadDove={handleLoadDove}
         onLoadSchwarz={handleLoadSchwarz}
+        onOpenLanding={() => setCurrentView('landing')}
       />
     </div>
   );
