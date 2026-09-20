@@ -180,6 +180,8 @@ const DEFAULT_LAYERS: LayerVisibility = {
   symmetry: true,
 };
 
+let mainCPLayers: LayerVisibility = { ...DEFAULT_LAYERS };
+
 function getSnapshot(state: AppStore): AppSnapshot {
   return {
     version: 1,
@@ -205,6 +207,7 @@ function getSnapshot(state: AppStore): AppSnapshot {
       rulers: s.rulers ? [...s.rulers] : [],
       insets: s.insets ? { ...s.insets } : undefined,
       transform: s.transform ? { ...s.transform } : undefined,
+      layers: s.layers ? { ...s.layers } : undefined,
     })),
     activeSheetId: state.activeSheetId,
     canvasImages: state.canvasImages.map((img) => ({ ...img })),
@@ -754,13 +757,33 @@ export const useAppStore = create<AppStore>((set, get) => ({
     const actId = get().activeSheetId;
     set((state) => {
       const nextLayers = { ...state.layers, [layer]: visible };
-      const nextGrid = layer === 'grid' ? { ...state.grid, enabled: visible } : state.grid;
+      const isGrid = layer === 'grid';
+      const isMain = actId === null || actId === 'main_cp';
+
+      if (isMain) {
+        mainCPLayers = nextLayers;
+      }
+
+      const nextGrid = isGrid ? { ...state.grid, enabled: visible } : state.grid;
+
+      const nextSheets = actId && actId !== 'main_cp'
+        ? state.sheets.map((s) => {
+            if (s.id === actId) {
+              const updatedLayers = { ...(s.layers || state.layers), [layer]: visible };
+              return {
+                ...s,
+                layers: updatedLayers,
+                ...(isGrid ? { grid: { ...s.grid, enabled: visible } } : {}),
+              };
+            }
+            return s;
+          })
+        : state.sheets;
+
       return {
         layers: nextLayers,
         grid: nextGrid,
-        sheets: actId && actId !== 'main_cp' && layer === 'grid'
-          ? state.sheets.map((s) => (s.id === actId ? { ...s, grid: { ...s.grid, enabled: visible } } : s))
-          : state.sheets,
+        sheets: nextSheets,
       };
     });
   },
@@ -778,6 +801,9 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
   loadProjectData: (data) => {
     get().pushHistory();
+    if (data.layers) {
+      mainCPLayers = { ...data.layers };
+    }
     set({
       ...data,
       selectedPointId: null,
@@ -790,12 +816,17 @@ export const useAppStore = create<AppStore>((set, get) => ({
     const prevId = get().activeSheetId;
     const sheets = get().sheets;
 
+    if (prevId === null || prevId === 'main_cp') {
+      mainCPLayers = { ...get().layers };
+    }
+
     let updatedSheets = sheets;
-    if (prevId && prevId !== 'main_cp' && prevId !== id) {
+    if (prevId && prevId !== 'main_cp') {
       updatedSheets = updatedSheets.map((s) => {
         if (s.id === prevId) {
           return {
             ...s,
+            layers: get().layers,
             grid: get().grid,
             creases: get().creases,
             points: get().points,
@@ -828,8 +859,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
           selectedCreaseId: null,
           selectedPointId: null,
           selectedMeasurementId: null,
-          layers: {
-            ...get().layers,
+          layers: targetSheet.layers || {
+            ...DEFAULT_LAYERS,
             grid: targetSheet.grid.enabled ?? true,
           },
         });
@@ -844,6 +875,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       selectedCreaseId: null,
       selectedPointId: null,
       selectedMeasurementId: null,
+      layers: mainCPLayers ? { ...mainCPLayers } : { ...DEFAULT_LAYERS },
     });
   },
   updateImageTransform: (patch) => {
@@ -1046,6 +1078,11 @@ export const useAppStore = create<AppStore>((set, get) => ({
     const newX = partial.x !== undefined ? partial.x : maxX + 100;
     const newY = partial.y !== undefined ? partial.y : paperPos.y;
 
+    const prevId = get().activeSheetId;
+    if (prevId === null || prevId === 'main_cp') {
+      mainCPLayers = { ...get().layers };
+    }
+
     const newSheet: CPSheet = {
       id,
       name: partial.name || `CP ${get().sheets.length + 1}`,
@@ -1061,9 +1098,13 @@ export const useAppStore = create<AppStore>((set, get) => ({
       rulers: partial.rulers || [],
       viewMode: partial.viewMode || 'vector',
       ...partial,
+      layers: partial.layers || { ...DEFAULT_LAYERS, grid: partial.grid?.enabled ?? true },
     };
     set((state) => ({
-      sheets: [...state.sheets, newSheet],
+      sheets: [
+        ...state.sheets.map((s) => (s.id === prevId ? { ...s, layers: get().layers } : s)),
+        newSheet,
+      ],
       activeSheetId: id,
       grid: newSheet.grid,
       creases: newSheet.creases,
@@ -1071,7 +1112,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       paper: newSheet.paper,
       selectedImageId: null,
       cropBox: null,
-      layers: {
+      layers: newSheet.layers || {
         ...state.layers,
         grid: newSheet.grid.enabled ?? true,
       },
@@ -1079,10 +1120,15 @@ export const useAppStore = create<AppStore>((set, get) => ({
     return id;
   },
   removeSheet: (id) => {
-    set((state) => ({
-      sheets: state.sheets.filter((s) => s.id !== id),
-      activeSheetId: state.activeSheetId === id ? (state.sheets[0]?.id || null) : state.activeSheetId,
-    }));
+    const isCurrent = get().activeSheetId === id;
+    const remaining = get().sheets.filter((s) => s.id !== id);
+    if (isCurrent) {
+      const nextId = remaining[0]?.id || null;
+      get().setActiveSheetId(nextId);
+      set({ sheets: remaining });
+    } else {
+      set({ sheets: remaining });
+    }
   },
   extractCPFromImage: (imageId, box) => {
     const img = get().canvasImages.find((i) => i.id === imageId);
@@ -1101,6 +1147,12 @@ export const useAppStore = create<AppStore>((set, get) => ({
     const aspect = (box.width && box.height) ? box.width / box.height : 1;
     const sheetW = 1000;
     const sheetH = Math.round(1000 / aspect);
+
+    const prevId = get().activeSheetId;
+    if (prevId === null || prevId === 'main_cp') {
+      mainCPLayers = { ...get().layers };
+    }
+
     const newSheet: CPSheet = {
       id: sheetId,
       name: sheetName,
@@ -1128,11 +1180,16 @@ export const useAppStore = create<AppStore>((set, get) => ({
       measurements: [],
       rulers: [],
       viewMode: 'vector',
+      layers: { ...get().layers, grid: true },
     };
     set((state) => ({
-      sheets: [...state.sheets, newSheet],
+      sheets: [
+        ...state.sheets.map((s) => (s.id === prevId ? { ...s, layers: get().layers } : s)),
+        newSheet,
+      ],
       activeSheetId: sheetId,
       cropBox: null,
+      layers: newSheet.layers,
     }));
     return sheetId;
   },

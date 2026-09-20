@@ -115,19 +115,16 @@ export function findSnapTarget(
 
   if (bestCandidate) return bestCandidate;
 
-  // 3. Grid Intersections
+  // 3. Grid Intersections (corners of grid cells)
   if (enabledTargets.grid && scene.gridConfig.enabled) {
     const { paperPoint, gridX, gridY } = nearestGridIntersection(cursor, scene.gridConfig);
     const dPx = calcScreenDist(cursor, paperPoint);
-    if (dPx < minScreenDist) {
-      minScreenDist = dPx;
-      bestCandidate = {
-        point: paperPoint,
-        kind: 'grid',
-        distancePx: dPx,
-        label: `Grid (${gridX}, ${gridY})`,
-      };
-    }
+    bestCandidate = {
+      point: paperPoint,
+      kind: 'grid',
+      distancePx: dPx,
+      label: `Grid (${gridX}, ${gridY})`,
+    };
   }
 
   // 4. Crease Lines (project onto crease segment with fast AABB rejection)

@@ -89,36 +89,6 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
       },
     },
     {
-      id: 'load_cp',
-      label: 'Load and Auto-Vectorize CP.png',
-      category: 'Preset',
-      icon: <Sparkles className="w-4 h-4 text-amber-500" />,
-      run: () => {
-        onLoadCP();
-        onClose();
-      },
-    },
-    {
-      id: 'load_dove',
-      label: 'Load Dove 2021 Sample',
-      category: 'Preset',
-      icon: <Sparkles className="w-4 h-4 text-purple-500" />,
-      run: () => {
-        onLoadDove();
-        onClose();
-      },
-    },
-    {
-      id: 'load_schwarz',
-      label: 'Load Schwarz lantern CP (CC0 Wikimedia Commons)',
-      category: 'Preset',
-      icon: <Sparkles className="w-4 h-4 text-emerald-500" />,
-      run: () => {
-        onLoadSchwarz();
-        onClose();
-      },
-    },
-    {
       id: 'fit_paper',
       label: 'Fit Paper to Screen [0]',
       category: 'View',

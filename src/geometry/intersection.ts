@@ -59,6 +59,13 @@ export function findCreaseIntersections(
     for (let j = i + 1; j < creases.length; j++) {
       const c1 = creases[i];
       const c2 = creases[j];
+      // Fast AABB bounding box rejection
+      if (
+        Math.max(c1.p1.x, c1.p2.x) < Math.min(c2.p1.x, c2.p2.x) ||
+        Math.min(c1.p1.x, c1.p2.x) > Math.max(c2.p1.x, c2.p2.x) ||
+        Math.max(c1.p1.y, c1.p2.y) < Math.min(c2.p1.y, c2.p2.y) ||
+        Math.min(c1.p1.y, c1.p2.y) > Math.max(c2.p1.y, c2.p2.y)
+      ) continue;
       const pt = segmentIntersection(c1.p1, c1.p2, c2.p1, c2.p2);
 
       if (pt) {

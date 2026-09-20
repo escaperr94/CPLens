@@ -131,7 +131,7 @@ export const TopNav: React.FC<TopNavProps> = ({
     e.target.value = '';
   };
 
-  const docTitle = image.fileName || 'CP.png';
+  const docTitle = image.fileName || 'Untitled CP';
   const zoomPercent = Math.round(camera.zoom * 100);
 
   return (
@@ -196,33 +196,6 @@ export const TopNav: React.FC<TopNavProps> = ({
               className="absolute left-0 top-full mt-1 w-56 bg-white rounded-md shadow-lg border border-[#E5E5E5] py-1 z-50 text-xs font-sans"
               onClick={() => setShowFileMenu(false)}
             >
-              <div className="px-3 py-1.5 text-[11px] font-semibold text-gray-400 uppercase tracking-wider">
-                Sample Files
-              </div>
-              <button
-                type="button"
-                onClick={onLoadCP}
-                className="w-full text-left px-3 py-1.5 hover:bg-gray-100 flex items-center gap-2 text-gray-700"
-              >
-                <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-                <span>CP.png (Default CP)</span>
-              </button>
-              <button
-                type="button"
-                onClick={onLoadDove}
-                className="w-full text-left px-3 py-1.5 hover:bg-gray-100 flex items-center gap-2 text-gray-700"
-              >
-                <span>Dove.png</span>
-              </button>
-              <button
-                type="button"
-                onClick={onLoadSchwarz}
-                className="w-full text-left px-3 py-1.5 hover:bg-gray-100 flex items-center gap-2 text-gray-700"
-              >
-                <span>Schwarz CP.png</span>
-              </button>
-
-              <div className="h-px bg-[#E5E5E5] my-1" />
 
               <button
                 type="button"

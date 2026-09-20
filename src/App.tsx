@@ -59,11 +59,17 @@ export const App: React.FC = () => {
   // Helper to convert Image to HTMLCanvasElement
   const imageToCanvas = (img: HTMLImageElement): HTMLCanvasElement => {
     const canvas = document.createElement('canvas');
-    canvas.width = img.naturalWidth || img.width;
-    canvas.height = img.naturalHeight || img.height;
+    const nw = img.naturalWidth || img.width || 1000;
+    const nh = img.naturalHeight || img.height || 1000;
+    const maxDim = Math.max(nw, nh);
+    const scale = maxDim > 1024 ? 1024 / maxDim : 1;
+    canvas.width = Math.round(nw * scale);
+    canvas.height = Math.round(nh * scale);
     const ctx = canvas.getContext('2d');
     if (ctx) {
-      ctx.drawImage(img, 0, 0);
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
     }
     return canvas;
   };
@@ -77,6 +83,10 @@ export const App: React.FC = () => {
       const controller=new AbortController();analysisController.current=controller;
       try {
         if (!silent) startAnalysis('Initializing computer vision engine...');
+        const nw = imgElement.naturalWidth || imgElement.width || 1000;
+        const nh = imgElement.naturalHeight || imgElement.height || 1000;
+        const maxDim = Math.max(nw, nh);
+        const scale = maxDim > 1024 ? 1024 / maxDim : 1;
         const canvas = imageToCanvas(imgElement);
 
         const result = await runCPAnalysisPipeline(canvas, (step, percent) => {
@@ -84,16 +94,24 @@ export const App: React.FC = () => {
         },controller.signal);
         if(controller.signal.aborted||useAppStore.getState().image.url!==source)return;
 
+        // Map corners from downscaled canvas coordinates back to original image pixel coordinates!
+        const originalCorners: [{ x: number; y: number }, { x: number; y: number }, { x: number; y: number }, { x: number; y: number }] = [
+          { x: Math.round(result.corners[0].x / scale), y: Math.round(result.corners[0].y / scale) },
+          { x: Math.round(result.corners[1].x / scale), y: Math.round(result.corners[1].y / scale) },
+          { x: Math.round(result.corners[2].x / scale), y: Math.round(result.corners[2].y / scale) },
+          { x: Math.round(result.corners[3].x / scale), y: Math.round(result.corners[3].y / scale) },
+        ];
+
         // Apply homography rectification to the paper
-        const { toNormalized, toImage } = createUnitSquareHomography(result.corners);
+        const { toNormalized, toImage } = createUnitSquareHomography(originalCorners);
 
         useAppStore.setState((state) => ({
           paper: {
-            corners: result.corners,
+            corners: originalCorners,
             rectified: true,
             homography: toNormalized,
             inverseHomography: toImage,
-            aspectRatio: 1,
+            aspectRatio: (originalCorners[1].x - originalCorners[0].x) / Math.max(1, originalCorners[3].y - originalCorners[0].y) || 1,
           },
           grid: {
             ...state.grid,
@@ -138,13 +156,7 @@ export const App: React.FC = () => {
       img.onload = async () => {
         try {
           state.startAnalysis(`Analyzing ${activeSheet.name}...`);
-          const canvas = document.createElement('canvas');
-          canvas.width = img.naturalWidth || img.width || 1000;
-          canvas.height = img.naturalHeight || img.height || 1000;
-          const ctx = canvas.getContext('2d');
-          if (ctx) {
-            ctx.drawImage(img, 0, 0);
-          }
+          const canvas = imageToCanvas(img);
 
           const result = await runCPAnalysisPipeline(canvas, (step, percent) => {
             state.updateAnalysisProgress(step, percent);
@@ -267,13 +279,6 @@ export const App: React.FC = () => {
     img.src = SCHWARZ_LANTERN_CP;
   }, [loadImage, analyzeImage]);
 
-  // Load CP.png automatically on initial mount
-  useEffect(() => {
-    let cancelled=false;const img=new Image();
-    img.onload=()=>{if(cancelled||useAppStore.getState().image.url)return;loadImage('/CP.png','CP.png',img.naturalWidth,img.naturalHeight);analyzeImage(img, true);};
-    img.src='/CP.png';
-    return ()=>{cancelled=true;};
-  }, [loadImage,analyzeImage]);
 
   // Global paste handler: paste any screenshot directly into the app!
   useEffect(() => {

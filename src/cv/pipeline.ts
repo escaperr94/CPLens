@@ -548,10 +548,33 @@ export async function analyzePixels(
   const intersectionCount = rawIntersections.length;
   // Raster segment endpoints are useful reference proposals even when a crossing is occluded.
   const endpointTolerance = 1.5 / Math.max(region.width, region.height);
-  for (const crease of creases) for (const endpoint of [crease.p1, crease.p2]) {
-    const existing = rawIntersections.find(p => Math.hypot(p.x-endpoint.x,p.y-endpoint.y) <= endpointTolerance);
-    if (existing) { if (!existing.creaseIds.includes(crease.id)) existing.creaseIds.push(crease.id); }
-    else rawIntersections.push({id: `end_${rawIntersections.length}`, ...endpoint, creaseIds:[crease.id]});
+  const cellSize = endpointTolerance * 2;
+  const gridMap = new Map<string, typeof rawIntersections[0]>();
+  for (const inter of rawIntersections) {
+    const cx = Math.floor(inter.x / cellSize);
+    const cy = Math.floor(inter.y / cellSize);
+    gridMap.set(`${cx}_${cy}`, inter);
+  }
+  for (const crease of creases) {
+    for (const endpoint of [crease.p1, crease.p2]) {
+      const cx = Math.floor(endpoint.x / cellSize);
+      const cy = Math.floor(endpoint.y / cellSize);
+      let found = false;
+      for (let dx = -1; dx <= 1 && !found; dx++) {
+        for (let dy = -1; dy <= 1 && !found; dy++) {
+          const neighbor = gridMap.get(`${cx + dx}_${cy + dy}`);
+          if (neighbor && Math.hypot(neighbor.x - endpoint.x, neighbor.y - endpoint.y) <= endpointTolerance) {
+            if (!neighbor.creaseIds.includes(crease.id)) neighbor.creaseIds.push(crease.id);
+            found = true;
+          }
+        }
+      }
+      if (!found) {
+        const newEntry = { id: `end_${rawIntersections.length}`, ...endpoint, creaseIds: [crease.id] };
+        rawIntersections.push(newEntry);
+        gridMap.set(`${cx}_${cy}`, newEntry);
+      }
+    }
   }
 
   // Step 7: Recovering reference points...

@@ -1,7 +1,7 @@
 import React, { useRef, useEffect, useState, useMemo, useCallback } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { Stage, Layer, Image as KonvaImage, Rect, Group, Circle, Line, Text, Transformer } from 'react-konva';
-import { Sparkles, ArrowLeft, Copy, Square, Crop } from 'lucide-react';
+import { Sparkles, ArrowLeft, Copy, Square, Crop, Upload } from 'lucide-react';
 import Konva from 'konva';
 import { useAppStore } from '../store/projectStore';
 import { CreaseLine, ReferencePoint, CPSheet } from '../store/types';
@@ -51,6 +51,8 @@ export const CPStage: React.FC = () => {
     targetFrame: { origin: Point2D; width: number; height: number; sheet?: CPSheet };
     targetGrid: GridConfig;
   } | null>(null);
+  const cropDragOffsetRef = useRef<{ startX: number; startY: number; initialX: number; initialY: number } | null>(null);
+  const [isDraggingOver, setIsDraggingOver] = useState(false);
 
   const {
     image,
@@ -129,6 +131,7 @@ export const CPStage: React.FC = () => {
     setPaperInsets,
     updateSheetInsets,
     autoTrimBoundary,
+    loadImage,
   } = useAppStore(useShallow((state) => ({
     image: state.image,
     paper: state.paper,
@@ -206,11 +209,62 @@ export const CPStage: React.FC = () => {
     setPaperInsets: state.setPaperInsets,
     updateSheetInsets: state.updateSheetInsets,
     autoTrimBoundary: state.autoTrimBoundary,
+    loadImage: state.loadImage,
   })));
+
+  // Check if canvas is completely empty
+  const isCanvasEmpty = !image.url && sheets.length === 0 && canvasImages.length === 0;
+
+  // Handler to load an image file from drag & drop, file input, or clipboard paste
+  const handleImageFile = useCallback((file: File) => {
+    if (!file.type.startsWith('image/')) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const dataUrl = e.target?.result as string;
+      if (!dataUrl) return;
+      const img = new window.Image();
+      img.onload = () => {
+        const fileName = file.name || 'Main Crease Pattern';
+        loadImage(dataUrl, fileName, img.naturalWidth, img.naturalHeight);
+        fitToPaper(dimensions.width, dimensions.height);
+      };
+      img.src = dataUrl;
+    };
+    reader.readAsDataURL(file);
+  }, [loadImage, fitToPaper, dimensions.width, dimensions.height]);
+
+  // Window paste listener to handle pasted images from clipboard (e.g. screenshots of CPs)
+  useEffect(() => {
+    const handlePaste = (e: ClipboardEvent) => {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        if (item.type.startsWith('image/')) {
+          const file = item.getAsFile();
+          if (file) {
+            e.preventDefault();
+            handleImageFile(file);
+            break;
+          }
+        }
+      }
+    };
+
+    window.addEventListener('paste', handlePaste);
+    return () => {
+      window.removeEventListener('paste', handlePaste);
+    };
+  }, [handleImageFile]);
 
   // Load image object whenever image URL changes
   useEffect(() => {
-    if (!image.url) return;
+    if (!image.url) {
+      setHtmlImage(null);
+      setRectifiedCanvas(null);
+      return;
+    }
     const img = new window.Image();
     img.crossOrigin = 'anonymous';
     img.src = image.url;
@@ -261,14 +315,6 @@ export const CPStage: React.FC = () => {
     if (!trRef.current || !stageRef.current) return;
     if (selectedImageId) {
       const node = stageRef.current.findOne(`.canvas_img_${selectedImageId}`);
-      if (node) {
-        trRef.current.nodes([node]);
-        trRef.current.getLayer()?.batchDraw();
-        return;
-      }
-    }
-    if (activeSheetId && activeSheetId !== 'main_cp' && activeSheetId !== boundaryEditSheetId) {
-      const node = stageRef.current.findOne(`.canvas_sheet_${activeSheetId}`);
       if (node) {
         trRef.current.nodes([node]);
         trRef.current.getLayer()?.batchDraw();
@@ -483,6 +529,22 @@ export const CPStage: React.FC = () => {
       if (cursorRafRef.current) cancelAnimationFrame(cursorRafRef.current);
     };
   }, []);
+  // Global pointerup to ensure dragging crop box never prematurely aborts
+  useEffect(() => {
+    const handleGlobalPointerUp = () => {
+      if (dragCropStart) {
+        setDragCropStart(null);
+        const cur = useAppStore.getState().cropBox;
+        if (cur && (cur.width < 15 || cur.height < 15)) {
+          setCropBox(null);
+        }
+      }
+    };
+    window.addEventListener('pointerup', handleGlobalPointerUp);
+    return () => {
+      window.removeEventListener('pointerup', handleGlobalPointerUp);
+    };
+  }, [dragCropStart, setCropBox]);
 
   // Crease intersections calculation
   const intersections = useMemo(() => {
@@ -892,7 +954,10 @@ export const CPStage: React.FC = () => {
       x: (worldX - activeFrame.origin.x) / activeFrame.width,
       y: (worldY - activeFrame.origin.y) / activeFrame.height,
     };
-    const targetGrid = activeFrame.sheet ? activeFrame.sheet.grid : grid;
+    const isGridActive = (activeFrame.sheet ? (activeFrame.sheet.grid.enabled ?? true) : (grid.enabled ?? true)) && layers.grid;
+    const targetGrid = activeFrame.sheet
+      ? { ...activeFrame.sheet.grid, enabled: isGridActive }
+      : { ...grid, enabled: isGridActive };
     pendingCursorRef.current = { paper: paperPos, screen: pointer, targetFrame: activeFrame, targetGrid };
 
     if (activeTool === 'crop' && dragCropStart) {
@@ -924,7 +989,7 @@ export const CPStage: React.FC = () => {
           const targetScene: GeometryScene = (sheetObj && sheetObj.id !== activeSheetId)
             ? {
                 referencePoints: targetPoints,
-                intersections: findCreaseIntersections(targetCreases),
+                intersections: [],
                 creases: targetCreases,
                 gridConfig: targetGrid,
                 symmetryAxes: symmetry.axes,
@@ -1026,6 +1091,24 @@ export const CPStage: React.FC = () => {
       className="relative w-full h-full bg-[#F7F7F7] select-none overflow-hidden"
       style={{ cursor: cursorStyle }}
       onContextMenu={(e) => e.preventDefault()}
+      onDragOver={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setIsDraggingOver(true);
+      }}
+      onDragLeave={(e) => {
+        if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+        setIsDraggingOver(false);
+      }}
+      onDrop={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setIsDraggingOver(false);
+        const files = e.dataTransfer?.files;
+        if (files && files.length > 0) {
+          handleImageFile(files[0]);
+        }
+      }}
     >
       <Stage
         ref={stageRef}
@@ -1035,7 +1118,12 @@ export const CPStage: React.FC = () => {
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
-        onMouseLeave={handleMouseUp}
+        onMouseLeave={() => {
+          if (isPanning) {
+            setIsPanning(false);
+            lastPanPosRef.current = null;
+          }
+        }}
         onDblClick={() => { const p = stageRef.current?.getPointerPosition(); if (p) zoomAroundPoint(2, p); }}
       >
         {/* Layer 1: Background & Image Layer */}
@@ -1050,156 +1138,160 @@ export const CPStage: React.FC = () => {
         >
 
           {/* Main Paper Figma Frame Title Header */}
-          <Group
-            x={paperPosition.x}
-            y={paperPosition.y - 24 / camera.zoom}
-            listening={false}
-          >
-            <Rect
-              x={0}
-              y={0}
-              width={160 / camera.zoom}
-              height={20 / camera.zoom}
-              fill="rgba(255, 255, 255, 0.95)"
-              stroke={activeSheetId === 'main_cp' || activeSheetId === null ? '#0D99FF' : '#E5E5E5'}
-              strokeWidth={1 / camera.zoom}
-              cornerRadius={4 / camera.zoom}
-            />
-            <Text
-              x={6 / camera.zoom}
-              y={4 / camera.zoom}
-              text={image.fileName || 'CP.png'}
-              fontSize={11 / camera.zoom}
-              fontFamily="sans-serif"
-              fontStyle="bold"
-              fill={activeSheetId === 'main_cp' || activeSheetId === null ? '#0D99FF' : '#111827'}
-            />
-            <Text
-              x={((image.fileName || 'CP.png').length * 7 + 10) / camera.zoom}
-              y={5 / camera.zoom}
-            text={(() => {
-              const paperAspect = paper.aspectRatio || 1;
-              const insets = paperInsets || { top: 0, right: 0, bottom: 0, left: 0 };
-              const w = Math.round(BASE_PAPER_SIZE - insets.left - insets.right);
-              const h = Math.round((BASE_PAPER_SIZE / paperAspect) - insets.top - insets.bottom);
-              return `${w}×${h}`;
-            })()}
-              fontSize={9 / camera.zoom}
-              fontFamily="monospace"
-              fill="#9CA3AF"
-            />
-          </Group>
+          {(Boolean(image.url) || !isCanvasEmpty) && (
+            <Group
+              x={paperPosition.x}
+              y={paperPosition.y - 24 / camera.zoom}
+              listening={false}
+            >
+              <Rect
+                x={0}
+                y={0}
+                width={160 / camera.zoom}
+                height={20 / camera.zoom}
+                fill="rgba(255, 255, 255, 0.95)"
+                stroke={activeSheetId === 'main_cp' || activeSheetId === null ? '#0D99FF' : '#E5E5E5'}
+                strokeWidth={1 / camera.zoom}
+                cornerRadius={4 / camera.zoom}
+              />
+              <Text
+                x={6 / camera.zoom}
+                y={4 / camera.zoom}
+                text={image.fileName || 'Main Crease Pattern'}
+                fontSize={11 / camera.zoom}
+                fontFamily="sans-serif"
+                fontStyle="bold"
+                fill={activeSheetId === 'main_cp' || activeSheetId === null ? '#0D99FF' : '#111827'}
+              />
+              <Text
+                x={((image.fileName || 'Main Crease Pattern').length * 7 + 10) / camera.zoom}
+                y={5 / camera.zoom}
+                text={(() => {
+                  const paperAspect = paper.aspectRatio || 1;
+                  const insets = paperInsets || { top: 0, right: 0, bottom: 0, left: 0 };
+                  const w = Math.round(BASE_PAPER_SIZE - insets.left - insets.right);
+                  const h = Math.round((BASE_PAPER_SIZE / paperAspect) - insets.top - insets.bottom);
+                  return `${w}×${h}`;
+                })()}
+                fontSize={9 / camera.zoom}
+                fontFamily="monospace"
+                fill="#9CA3AF"
+              />
+            </Group>
+          )}
 
           {/* Main Paper Workspace Group */}
-          <Group x={paperPosition.x} y={paperPosition.y}>
-          {(() => {
-            const paperAspect = paper.aspectRatio || 1;
-            const paperW = BASE_PAPER_SIZE;
-            const paperH = BASE_PAPER_SIZE / paperAspect;
-            const insets = paperInsets || { top: 0, right: 0, bottom: 0, left: 0 };
-            const frameX = insets.left;
-            const frameY = insets.top;
-            const frameW = Math.max(20, paperW - insets.left - insets.right);
-            const frameH = Math.max(20, paperH - insets.top - insets.bottom);
-            return (
-              <>
-                {/* Paper Background Area */}
-                <Rect
-                  x={frameX}
-                  y={frameY}
-                  width={frameW}
-                  height={frameH}
-                  fill="#ffffff"
-                  stroke={layers.boundary ? '#111111' : '#E5E5E5'}
-                  strokeWidth={1 / camera.zoom}
-                  shadowColor="rgba(0, 0, 0, 0.06)"
-                  shadowBlur={20 / camera.zoom}
-                  shadowOffsetY={4 / camera.zoom}
-                  listening={false}
-                />
+          {(Boolean(image.url) || !isCanvasEmpty) && (
+            <Group x={paperPosition.x} y={paperPosition.y}>
+            {(() => {
+              const paperAspect = paper.aspectRatio || 1;
+              const paperW = BASE_PAPER_SIZE;
+              const paperH = BASE_PAPER_SIZE / paperAspect;
+              const insets = paperInsets || { top: 0, right: 0, bottom: 0, left: 0 };
+              const frameX = insets.left;
+              const frameY = insets.top;
+              const frameW = Math.max(20, paperW - insets.left - insets.right);
+              const frameH = Math.max(20, paperH - insets.top - insets.bottom);
+              return (
+                <>
+                  {/* Paper Background Area */}
+                  <Rect
+                    x={frameX}
+                    y={frameY}
+                    width={frameW}
+                    height={frameH}
+                    fill="#ffffff"
+                    stroke={layers.boundary ? '#111111' : '#E5E5E5'}
+                    strokeWidth={1 / camera.zoom}
+                    shadowColor="rgba(0, 0, 0, 0.06)"
+                    shadowBlur={20 / camera.zoom}
+                    shadowOffsetY={4 / camera.zoom}
+                    listening={false}
+                  />
 
-                {/* Raster Image with imageTransform & clipping */}
-                {layers.image && (
-                  <Group clipX={frameX} clipY={frameY} clipWidth={frameW} clipHeight={frameH}>
-                    {(() => {
-                      const curTransform = (activeSheetId === null || activeSheetId === 'main_cp')
-                        ? imageTransform
-                        : { scale: 1, offsetX: 0, offsetY: 0 };
-                      const scaledW = paperW * curTransform.scale;
-                      const scaledH = paperH * curTransform.scale;
-                      const imgX = curTransform.offsetX - (paperW * (curTransform.scale - 1)) / 2;
-                      const imgY = curTransform.offsetY - (paperH * (curTransform.scale - 1)) / 2;
+                  {/* Raster Image with imageTransform & clipping */}
+                  {layers.image && (
+                    <Group clipX={frameX} clipY={frameY} clipWidth={frameW} clipHeight={frameH}>
+                      {(() => {
+                        const curTransform = (activeSheetId === null || activeSheetId === 'main_cp')
+                          ? imageTransform
+                          : { scale: 1, offsetX: 0, offsetY: 0 };
+                        const scaledW = paperW * curTransform.scale;
+                        const scaledH = paperH * curTransform.scale;
+                        const imgX = curTransform.offsetX - (paperW * (curTransform.scale - 1)) / 2;
+                        const imgY = curTransform.offsetY - (paperH * (curTransform.scale - 1)) / 2;
 
-                      return (
-                        <>
-                          {paper.rectified && rectifiedCanvas ? (
-                            <KonvaImage
-                              image={rectifiedCanvas}
-                              x={imgX}
-                              y={imgY}
-                              width={scaledW}
-                              height={scaledH}
-                              opacity={imageOpacity}
-                              listening={false}
-                            />
-                          ) : htmlImage ? (
-                            <KonvaImage
-                              image={htmlImage}
-                              x={imgX}
-                              y={imgY}
-                              width={scaledW}
-                              height={scaledH}
-                              opacity={imageOpacity}
-                              listening={false}
-                            />
-                          ) : null}
-                        </>
-                      );
-                    })()}
-                  </Group>
-                )}
+                        return (
+                          <>
+                            {paper.rectified && rectifiedCanvas ? (
+                              <KonvaImage
+                                image={rectifiedCanvas}
+                                x={imgX}
+                                y={imgY}
+                                width={scaledW}
+                                height={scaledH}
+                                opacity={imageOpacity}
+                                listening={false}
+                              />
+                            ) : htmlImage ? (
+                              <KonvaImage
+                                image={htmlImage}
+                                x={imgX}
+                                y={imgY}
+                                width={scaledW}
+                                height={scaledH}
+                                opacity={imageOpacity}
+                                listening={false}
+                              />
+                            ) : null}
+                          </>
+                        );
+                      })()}
+                    </Group>
+                  )}
 
-                {/* Layer 2: Grid on main paper (when main paper is active) */}
-                {layers.grid && (activeSheetId === null || activeSheetId === 'main_cp') && (
-                  <Group x={frameX} y={frameY}>
-                    <GridLayer config={grid} zoom={camera.zoom} paperWidth={frameW} paperHeight={frameH} />
-                  </Group>
-                )}
+                  {/* Layer 2: Grid on main paper (when main paper is active) */}
+                  {layers.grid && (activeSheetId === null || activeSheetId === 'main_cp') && (
+                    <Group x={frameX} y={frameY}>
+                      <GridLayer config={grid} zoom={camera.zoom} paperWidth={frameW} paperHeight={frameH} />
+                    </Group>
+                  )}
 
-                {/* Layer 3: Crease Lines on main paper */}
-                {layers.creases && viewMode !== 'image' && (activeSheetId === null || activeSheetId === 'main_cp') && (
-                  <Group x={frameX} y={frameY}>
-                    <CreaseLayer
-                      creases={creases}
-                      selectedId={selectedCreaseId}
+                  {/* Layer 3: Crease Lines on main paper */}
+                  {layers.creases && viewMode !== 'image' && (activeSheetId === null || activeSheetId === 'main_cp') && (
+                    <Group x={frameX} y={frameY}>
+                      <CreaseLayer
+                        creases={creases}
+                        selectedId={selectedCreaseId}
+                        zoom={camera.zoom}
+                        onSelectCrease={selectCrease}
+                        paperWidth={frameW}
+                        paperHeight={frameH}
+                      />
+                    </Group>
+                  )}
+
+                  {/* Layer 4: Intersections */}
+                  {layers.intersections && viewMode !== 'image' && (
+                    <Group x={frameX} y={frameY}>
+                      <IntersectionLayer creases={creases} zoom={camera.zoom} paperWidth={frameW} paperHeight={frameH} />
+                    </Group>
+                  )}
+
+                  {/* Layer 5: Symmetry */}
+                  {layers.symmetry && (
+                    <SymmetryLayer
+                      axes={symmetry.axes}
+                      enabled={symmetry.enabled}
+                      points={points}
                       zoom={camera.zoom}
-                      onSelectCrease={selectCrease}
-                      paperWidth={frameW}
-                      paperHeight={frameH}
                     />
-                  </Group>
-                )}
-
-                {/* Layer 4: Intersections */}
-                {layers.intersections && viewMode !== 'image' && (
-                  <Group x={frameX} y={frameY}>
-                    <IntersectionLayer creases={creases} zoom={camera.zoom} paperWidth={frameW} paperHeight={frameH} />
-                  </Group>
-                )}
-
-          {/* Layer 5: Symmetry */}
-          {layers.symmetry && (
-            <SymmetryLayer
-              axes={symmetry.axes}
-              enabled={symmetry.enabled}
-              points={points}
-              zoom={camera.zoom}
-            />
-                )}
-              </>
-            );
-          })()}
-          </Group>
+                  )}
+                </>
+              );
+            })()}
+            </Group>
+          )}
         </Layer>
 
         {/* Layer 2: Interactive Dynamic Overlay Layer */}
@@ -1320,29 +1412,6 @@ export const CPStage: React.FC = () => {
           </Group>
         );
       })()}
-          {/* Active Crop Box on Canvas */}
-          {cropBox && cropBox.active && (
-            <Group listening={false}>
-              <Rect
-                x={cropBox.x}
-                y={cropBox.y}
-                width={cropBox.width}
-                height={cropBox.height}
-                fill="rgba(13, 153, 255, 0.08)"
-                stroke="#0D99FF"
-                strokeWidth={1.5 / camera.zoom}
-                dash={[4 / camera.zoom, 4 / camera.zoom]}
-              />
-              <Text
-                x={cropBox.x + 4 / camera.zoom}
-                y={cropBox.y - 14 / camera.zoom}
-                text={`${Math.round(cropBox.width)} × ${Math.round(cropBox.height)}`}
-                fontSize={10 / camera.zoom}
-                fontFamily="monospace"
-                fill="#0D99FF"
-              />
-            </Group>
-          )}
           {/* Canvas Images (Pasted/Imported Images on Canvas) */}
           {canvasImages.map((cImg) => {
             const isSelected = selectedImageId === cImg.id;
@@ -1450,8 +1519,8 @@ export const CPStage: React.FC = () => {
                   <Rect
                     x={-2 / camera.zoom}
                     y={-2 / camera.zoom}
-                    width={(cImg.width + 4) / camera.zoom}
-                    height={(cImg.height + 4) / camera.zoom}
+                    width={cImg.width + 4 / camera.zoom}
+                    height={cImg.height + 4 / camera.zoom}
                     stroke="#0D99FF"
                     strokeWidth={1.5 / camera.zoom}
                     dash={[4 / camera.zoom, 3 / camera.zoom]}
@@ -1830,6 +1899,7 @@ export const CPStage: React.FC = () => {
                             height={8 / camera.zoom}
                             fill="#0D99FF"
                             cornerRadius={3 / camera.zoom}
+                            draggable={true}
                             onDragStart={(e) => {
                               e.cancelBubble = true;
                               useAppStore.getState().pushHistory();
@@ -1866,6 +1936,7 @@ export const CPStage: React.FC = () => {
                             fill="#0D99FF"
                             cornerRadius={3 / camera.zoom}
                             opacity={0.85}
+                            draggable={true}
                             onDragStart={(e) => {
                               e.cancelBubble = true;
                               useAppStore.getState().pushHistory();
@@ -1902,6 +1973,7 @@ export const CPStage: React.FC = () => {
                             fill="#0D99FF"
                             cornerRadius={3 / camera.zoom}
                             opacity={0.85}
+                            draggable={true}
                             onDragStart={(e) => {
                               e.cancelBubble = true;
                               useAppStore.getState().pushHistory();
@@ -1938,6 +2010,7 @@ export const CPStage: React.FC = () => {
                             fill="#0D99FF"
                             cornerRadius={3 / camera.zoom}
                             opacity={0.85}
+                            draggable={true}
                             onDragStart={(e) => {
                               e.cancelBubble = true;
                               useAppStore.getState().pushHistory();
@@ -2061,6 +2134,289 @@ export const CPStage: React.FC = () => {
               }}
             />
           )}
+          {/* Active Canvas Crop Box with Interactive Resize Handles & Repositioning */}
+          {cropBox && cropBox.active && (
+            <Group>
+              {/* Draggable Body to reposition the crop box */}
+              <Rect
+                x={cropBox.x}
+                y={cropBox.y}
+                width={cropBox.width}
+                height={cropBox.height}
+                fill="rgba(13, 153, 255, 0.08)"
+                stroke="#0D99FF"
+                strokeWidth={1.5 / camera.zoom}
+                dash={[4 / camera.zoom, 4 / camera.zoom]}
+                draggable={true}
+                onMouseDown={(e) => { e.cancelBubble = true; }}
+                onDragStart={(e) => {
+                  e.cancelBubble = true;
+                  const stage = e.target.getStage();
+                  const p = stage?.getPointerPosition();
+                  if (p) {
+                    cropDragOffsetRef.current = {
+                      startX: (p.x - camera.panX) / camera.zoom,
+                      startY: (p.y - camera.panY) / camera.zoom,
+                      initialX: cropBox.x,
+                      initialY: cropBox.y,
+                    };
+                  }
+                }}
+                onDragMove={(e) => {
+                  e.cancelBubble = true;
+                  if (!cropDragOffsetRef.current) return;
+                  const stage = e.target.getStage();
+                  const p = stage?.getPointerPosition();
+                  if (!p) return;
+                  const curX = (p.x - camera.panX) / camera.zoom;
+                  const curY = (p.y - camera.panY) / camera.zoom;
+                  const dx = curX - cropDragOffsetRef.current.startX;
+                  const dy = curY - cropDragOffsetRef.current.startY;
+                  setCropBox({
+                    ...cropBox,
+                    x: Math.round(cropDragOffsetRef.current.initialX + dx),
+                    y: Math.round(cropDragOffsetRef.current.initialY + dy),
+                  });
+                }}
+                onDragEnd={(e) => {
+                  e.cancelBubble = true;
+                  cropDragOffsetRef.current = null;
+                }}
+                onMouseEnter={(e) => { e.target.getStage()!.container().style.cursor = 'move'; }}
+                onMouseLeave={(e) => { e.target.getStage()!.container().style.cursor = cursorStyle; }}
+              />
+
+              {/* Dimensions text badge */}
+              <Text
+                x={cropBox.x + 4 / camera.zoom}
+                y={cropBox.y - 14 / camera.zoom}
+                text={`${Math.round(cropBox.width)} × ${Math.round(cropBox.height)}`}
+                fontSize={10 / camera.zoom}
+                fontFamily="monospace"
+                fill="#0D99FF"
+                listening={false}
+              />
+
+              {cropBox.width > 20 && cropBox.height > 20 && (
+                <Group>
+                  {/* Top-Left Corner Handle */}
+                  <Circle
+                    x={cropBox.x}
+                    y={cropBox.y}
+                    radius={6 / camera.zoom}
+                    fill="#FFFFFF"
+                    stroke="#0D99FF"
+                    strokeWidth={2 / camera.zoom}
+                    draggable={true}
+                    onMouseDown={(e) => { e.cancelBubble = true; }}
+                    onDragStart={(e) => { e.cancelBubble = true; }}
+                    onDragMove={(e) => {
+                      e.cancelBubble = true;
+                      const stage = e.target.getStage();
+                      const p = stage?.getPointerPosition();
+                      if (!p) return;
+                      const wx = (p.x - camera.panX) / camera.zoom;
+                      const wy = (p.y - camera.panY) / camera.zoom;
+                      const right = cropBox.x + cropBox.width;
+                      const bottom = cropBox.y + cropBox.height;
+                      const newX = Math.min(right - 10, wx);
+                      const newY = Math.min(bottom - 10, wy);
+                      setCropBox({ ...cropBox, x: newX, y: newY, width: right - newX, height: bottom - newY });
+                    }}
+                    onDragEnd={(e) => { e.cancelBubble = true; }}
+                    onMouseEnter={(e) => { e.target.getStage()!.container().style.cursor = 'nwse-resize'; }}
+                    onMouseLeave={(e) => { e.target.getStage()!.container().style.cursor = cursorStyle; }}
+                  />
+
+                  {/* Top-Right Corner Handle */}
+                  <Circle
+                    x={cropBox.x + cropBox.width}
+                    y={cropBox.y}
+                    radius={6 / camera.zoom}
+                    fill="#FFFFFF"
+                    stroke="#0D99FF"
+                    strokeWidth={2 / camera.zoom}
+                    draggable={true}
+                    onMouseDown={(e) => { e.cancelBubble = true; }}
+                    onDragStart={(e) => { e.cancelBubble = true; }}
+                    onDragMove={(e) => {
+                      e.cancelBubble = true;
+                      const stage = e.target.getStage();
+                      const p = stage?.getPointerPosition();
+                      if (!p) return;
+                      const wx = (p.x - camera.panX) / camera.zoom;
+                      const wy = (p.y - camera.panY) / camera.zoom;
+                      const left = cropBox.x;
+                      const bottom = cropBox.y + cropBox.height;
+                      const newW = Math.max(10, wx - left);
+                      const newY = Math.min(bottom - 10, wy);
+                      setCropBox({ ...cropBox, y: newY, width: newW, height: bottom - newY });
+                    }}
+                    onDragEnd={(e) => { e.cancelBubble = true; }}
+                    onMouseEnter={(e) => { e.target.getStage()!.container().style.cursor = 'nesw-resize'; }}
+                    onMouseLeave={(e) => { e.target.getStage()!.container().style.cursor = cursorStyle; }}
+                  />
+
+                  {/* Bottom-Right Corner Handle */}
+                  <Circle
+                    x={cropBox.x + cropBox.width}
+                    y={cropBox.y + cropBox.height}
+                    radius={6 / camera.zoom}
+                    fill="#FFFFFF"
+                    stroke="#0D99FF"
+                    strokeWidth={2 / camera.zoom}
+                    draggable={true}
+                    onMouseDown={(e) => { e.cancelBubble = true; }}
+                    onDragStart={(e) => { e.cancelBubble = true; }}
+                    onDragMove={(e) => {
+                      e.cancelBubble = true;
+                      const stage = e.target.getStage();
+                      const p = stage?.getPointerPosition();
+                      if (!p) return;
+                      const wx = (p.x - camera.panX) / camera.zoom;
+                      const wy = (p.y - camera.panY) / camera.zoom;
+                      const newW = Math.max(10, wx - cropBox.x);
+                      const newH = Math.max(10, wy - cropBox.y);
+                      setCropBox({ ...cropBox, width: newW, height: newH });
+                    }}
+                    onDragEnd={(e) => { e.cancelBubble = true; }}
+                    onMouseEnter={(e) => { e.target.getStage()!.container().style.cursor = 'nwse-resize'; }}
+                    onMouseLeave={(e) => { e.target.getStage()!.container().style.cursor = cursorStyle; }}
+                  />
+
+                  {/* Bottom-Left Corner Handle */}
+                  <Circle
+                    x={cropBox.x}
+                    y={cropBox.y + cropBox.height}
+                    radius={6 / camera.zoom}
+                    fill="#FFFFFF"
+                    stroke="#0D99FF"
+                    strokeWidth={2 / camera.zoom}
+                    draggable={true}
+                    onMouseDown={(e) => { e.cancelBubble = true; }}
+                    onDragStart={(e) => { e.cancelBubble = true; }}
+                    onDragMove={(e) => {
+                      e.cancelBubble = true;
+                      const stage = e.target.getStage();
+                      const p = stage?.getPointerPosition();
+                      if (!p) return;
+                      const wx = (p.x - camera.panX) / camera.zoom;
+                      const wy = (p.y - camera.panY) / camera.zoom;
+                      const right = cropBox.x + cropBox.width;
+                      const newX = Math.min(right - 10, wx);
+                      const newH = Math.max(10, wy - cropBox.y);
+                      setCropBox({ ...cropBox, x: newX, width: right - newX, height: newH });
+                    }}
+                    onDragEnd={(e) => { e.cancelBubble = true; }}
+                    onMouseEnter={(e) => { e.target.getStage()!.container().style.cursor = 'nesw-resize'; }}
+                    onMouseLeave={(e) => { e.target.getStage()!.container().style.cursor = cursorStyle; }}
+                  />
+
+                  {/* Top Edge Handle Bar */}
+                  <Rect
+                    x={cropBox.x + cropBox.width * 0.25}
+                    y={cropBox.y - 3 / camera.zoom}
+                    width={cropBox.width * 0.5}
+                    height={6 / camera.zoom}
+                    fill="#0D99FF"
+                    cornerRadius={2 / camera.zoom}
+                    draggable={true}
+                    onMouseDown={(e) => { e.cancelBubble = true; }}
+                    onDragStart={(e) => { e.cancelBubble = true; }}
+                    onDragMove={(e) => {
+                      e.cancelBubble = true;
+                      const stage = e.target.getStage();
+                      const p = stage?.getPointerPosition();
+                      if (!p) return;
+                      const wy = (p.y - camera.panY) / camera.zoom;
+                      const bottom = cropBox.y + cropBox.height;
+                      const newY = Math.min(bottom - 10, wy);
+                      setCropBox({ ...cropBox, y: newY, height: bottom - newY });
+                    }}
+                    onDragEnd={(e) => { e.cancelBubble = true; }}
+                    onMouseEnter={(e) => { e.target.getStage()!.container().style.cursor = 'ns-resize'; }}
+                    onMouseLeave={(e) => { e.target.getStage()!.container().style.cursor = cursorStyle; }}
+                  />
+
+                  {/* Bottom Edge Handle Bar */}
+                  <Rect
+                    x={cropBox.x + cropBox.width * 0.25}
+                    y={cropBox.y + cropBox.height - 3 / camera.zoom}
+                    width={cropBox.width * 0.5}
+                    height={6 / camera.zoom}
+                    fill="#0D99FF"
+                    cornerRadius={2 / camera.zoom}
+                    draggable={true}
+                    onMouseDown={(e) => { e.cancelBubble = true; }}
+                    onDragStart={(e) => { e.cancelBubble = true; }}
+                    onDragMove={(e) => {
+                      e.cancelBubble = true;
+                      const stage = e.target.getStage();
+                      const p = stage?.getPointerPosition();
+                      if (!p) return;
+                      const wy = (p.y - camera.panY) / camera.zoom;
+                      const newH = Math.max(10, wy - cropBox.y);
+                      setCropBox({ ...cropBox, height: newH });
+                    }}
+                    onDragEnd={(e) => { e.cancelBubble = true; }}
+                    onMouseEnter={(e) => { e.target.getStage()!.container().style.cursor = 'ns-resize'; }}
+                    onMouseLeave={(e) => { e.target.getStage()!.container().style.cursor = cursorStyle; }}
+                  />
+
+                  {/* Left Edge Handle Bar */}
+                  <Rect
+                    x={cropBox.x - 3 / camera.zoom}
+                    y={cropBox.y + cropBox.height * 0.25}
+                    width={6 / camera.zoom}
+                    height={cropBox.height * 0.5}
+                    fill="#0D99FF"
+                    cornerRadius={2 / camera.zoom}
+                    draggable={true}
+                    onMouseDown={(e) => { e.cancelBubble = true; }}
+                    onDragStart={(e) => { e.cancelBubble = true; }}
+                    onDragMove={(e) => {
+                      e.cancelBubble = true;
+                      const stage = e.target.getStage();
+                      const p = stage?.getPointerPosition();
+                      if (!p) return;
+                      const wx = (p.x - camera.panX) / camera.zoom;
+                      const right = cropBox.x + cropBox.width;
+                      const newX = Math.min(right - 10, wx);
+                      setCropBox({ ...cropBox, x: newX, width: right - newX });
+                    }}
+                    onDragEnd={(e) => { e.cancelBubble = true; }}
+                    onMouseEnter={(e) => { e.target.getStage()!.container().style.cursor = 'ew-resize'; }}
+                    onMouseLeave={(e) => { e.target.getStage()!.container().style.cursor = cursorStyle; }}
+                  />
+
+                  {/* Right Edge Handle Bar */}
+                  <Rect
+                    x={cropBox.x + cropBox.width - 3 / camera.zoom}
+                    y={cropBox.y + cropBox.height * 0.25}
+                    width={6 / camera.zoom}
+                    height={cropBox.height * 0.5}
+                    fill="#0D99FF"
+                    cornerRadius={2 / camera.zoom}
+                    draggable={true}
+                    onMouseDown={(e) => { e.cancelBubble = true; }}
+                    onDragStart={(e) => { e.cancelBubble = true; }}
+                    onDragMove={(e) => {
+                      e.cancelBubble = true;
+                      const stage = e.target.getStage();
+                      const p = stage?.getPointerPosition();
+                      if (!p) return;
+                      const wx = (p.x - camera.panX) / camera.zoom;
+                      const newW = Math.max(10, wx - cropBox.x);
+                      setCropBox({ ...cropBox, width: newW });
+                    }}
+                    onDragEnd={(e) => { e.cancelBubble = true; }}
+                    onMouseEnter={(e) => { e.target.getStage()!.container().style.cursor = 'ew-resize'; }}
+                    onMouseLeave={(e) => { e.target.getStage()!.container().style.cursor = cursorStyle; }}
+                  />
+                </Group>
+              )}
+            </Group>
+          )}
           {/* Topmost Precision Snap Overlay: rendered on top of all sheets & canvas images */}
           {snapCandidate && (() => {
             const fallbackFrame = getActiveSheetFrame();
@@ -2086,8 +2442,44 @@ export const CPStage: React.FC = () => {
           })()}
         </Layer>
       </Stage>
+      {/* Empty State Dropzone Overlay */}
+      {isCanvasEmpty && (
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-20">
+          <div
+            className={`flex flex-col items-center justify-center max-w-md mx-4 p-8 text-center bg-white/90 backdrop-blur-md rounded-2xl border-2 border-dashed ${
+              isDraggingOver ? 'border-[#0D99FF] bg-[#F0F7FF]/95 scale-[1.02]' : 'border-gray-200 hover:border-gray-300'
+            } shadow-xl pointer-events-auto transition-all duration-200`}
+          >
+            <div className="w-16 h-16 mb-4 rounded-2xl bg-[#0D99FF]/10 flex items-center justify-center text-[#0D99FF] shadow-inner">
+              <Sparkles className="w-8 h-8 text-[#0D99FF]" />
+            </div>
+            <h2 className="text-lg font-semibold text-gray-900 mb-1.5">
+              No Crease Pattern Loaded
+            </h2>
+            <p className="text-xs text-gray-500 mb-6 leading-relaxed max-w-xs">
+              Drop any Crease Pattern image here, paste from clipboard (Ctrl+V / Cmd+V), or browse to begin
+            </p>
+            <label className="inline-flex items-center gap-2 px-4 py-2.5 bg-[#0D99FF] hover:bg-[#0088EE] active:bg-[#0077D4] text-white text-xs font-medium rounded-xl shadow-xs transition-all cursor-pointer select-none">
+              <Upload className="w-4 h-4" />
+              <span>Open Image File...</span>
+              <input
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) {
+                    handleImageFile(file);
+                  }
+                  e.target.value = '';
+                }}
+              />
+            </label>
+          </div>
+        </div>
+      )}
       {/* Floating Crop Action Bar */}
-      {cropBox && cropBox.active && cropBox.width > 20 && cropBox.height > 20 && (
+      {cropBox && cropBox.active && !dragCropStart && cropBox.width > 20 && cropBox.height > 20 && (
         <div
           className="absolute z-30 flex items-center gap-2 bg-white/95 backdrop-blur-md border border-[#E5E5E5] shadow-2xl rounded-2xl p-2 animate-in fade-in zoom-in-95 duration-150 select-none pointer-events-auto"
           style={{

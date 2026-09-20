@@ -286,4 +286,99 @@ describe('Non-square Crop, Autofit Boundary, and Manual Grid Inspection', () => 
     expect(roundTripFromScreen.x).toBeCloseTo(0.5, 4);
     expect(roundTripFromScreen.y).toBeCloseTo(0.5, 4);
   });
+
+  it('maintains independent layer visibility per sheet and per CP', () => {
+    const store = useAppStore.getState();
+
+    // 1. Main CP starts with default layers (all visible)
+    expect(useAppStore.getState().layers.creases).toBe(true);
+    expect(useAppStore.getState().layers.grid).toBe(true);
+
+    // 2. Add Sheet A
+    const sheetAId = store.addSheet({
+      name: 'Sheet A (Cut)',
+      width: 800,
+      height: 800,
+    });
+    store.setActiveSheetId(sheetAId);
+
+    // Toggle off creases and grid on Sheet A
+    store.setLayerVisibility('creases', false);
+    store.setLayerVisibility('grid', false);
+
+    let sheetA = useAppStore.getState().sheets.find((s) => s.id === sheetAId);
+    expect(sheetA?.layers?.creases).toBe(false);
+    expect(sheetA?.layers?.grid).toBe(false);
+    expect(useAppStore.getState().layers.creases).toBe(false);
+
+    // 3. Add Sheet B
+    const sheetBId = store.addSheet({
+      name: 'Sheet B (Cut)',
+      width: 600,
+      height: 600,
+    });
+    store.setActiveSheetId(sheetBId);
+
+    // Sheet B starts with its own enabled layers, unaffected by Sheet A
+    expect(useAppStore.getState().layers.creases).toBe(true);
+    expect(useAppStore.getState().layers.grid).toBe(true);
+
+    // 4. Switch back to Sheet A: its hidden layers are restored!
+    store.setActiveSheetId(sheetAId);
+    expect(useAppStore.getState().layers.creases).toBe(false);
+    expect(useAppStore.getState().layers.grid).toBe(false);
+
+    // 5. Switch back to Main CP: its layers remain intact!
+    store.setActiveSheetId(null);
+    expect(useAppStore.getState().layers.creases).toBe(true);
+    expect(useAppStore.getState().layers.grid).toBe(true);
+  });
+
+  it('always supports displaying coordinates along the grid for any CP when grid is enabled', () => {
+    const gridConfig = {
+      ...DEFAULT_GRID_CONFIG,
+      divisionsX: 64,
+      divisionsY: 64,
+      enabled: true,
+    };
+
+    const scene = {
+      referencePoints: [],
+      intersections: [],
+      creases: [],
+      gridConfig,
+    };
+
+    // Test multiple cursor locations across any arbitrary PNG dimensions
+    const testCases = [
+      { cursor: { x: 0.125, y: 0.125 }, expectedGrid: { gx: 8, gy: 8 } },
+      { cursor: { x: 0.25, y: 0.5 }, expectedGrid: { gx: 16, gy: 32 } },
+      { cursor: { x: 0.703, y: 0.312 }, expectedGrid: { gx: 45, gy: 20 } },
+      { cursor: { x: 0.984, y: 0.984 }, expectedGrid: { gx: 63, gy: 63 } },
+    ];
+
+    for (const tc of testCases) {
+      const snap = findSnapTarget(tc.cursor, scene, DEFAULT_SNAP_OPTIONS, 1200, 1200);
+      expect(snap).not.toBeNull();
+      expect(snap?.kind).toBe('grid');
+      expect(snap?.label).toBe(`Grid (${tc.expectedGrid.gx}, ${tc.expectedGrid.gy})`);
+      expect(snap?.point.x).toBeCloseTo(tc.expectedGrid.gx / 64, 4);
+      expect(snap?.point.y).toBeCloseTo(tc.expectedGrid.gy / 64, 4);
+    }
+  });
+
+  it('initial state starts with an empty canvas without auto-loading any hardcoded image', () => {
+    const state = useAppStore.getState();
+    // When no image has been loaded, image.url is null
+    useAppStore.setState({
+      image: { url: null, fileName: '', width: 0, height: 0, crop: null },
+      sheets: [],
+      canvasImages: [],
+    });
+
+    const cur = useAppStore.getState();
+    expect(cur.image.url).toBeNull();
+    expect(cur.sheets).toHaveLength(0);
+    expect(cur.canvasImages).toHaveLength(0);
+  });
 });

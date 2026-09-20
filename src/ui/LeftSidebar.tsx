@@ -146,11 +146,16 @@ export const LeftSidebar: React.FC<LeftSidebarProps> = ({
     { id: 'folding-seq', label: 'Folding Sequences', icon: <Sparkles className="w-3.5 h-3.5" /> },
   ];
 
-  const fileName = image.fileName || '';
-  const isCP = fileName === 'CP.png' || fileName.includes('CP.png');
-  const isDove = fileName.includes('Dove');
-  const isSchwarz = fileName.includes('Schwarz');
-
+  const activeSheet = sheets.find((s) => s.id === (activeSheetId || null));
+  const activeCPName = activeSheet
+    ? activeSheet.name
+    : (image.fileName || 'Main Crease Pattern');
+  const activeCPDims = activeSheet
+    ? `${Math.round(activeSheet.width)}×${Math.round(activeSheet.height)}`
+    : (image.width && image.height ? `${image.width}×${image.height}` : '1000×1000');
+  const activeGridDivs = activeSheet
+    ? `${activeSheet.grid.divisionsX}×${activeSheet.grid.divisionsY}`
+    : `${grid.divisionsX}×${grid.divisionsY}`;
   return (
     <aside className="w-[240px] shrink-0 bg-white border-r border-[#E5E5E5] flex flex-col h-full overflow-y-auto text-xs select-none">
       {/* Hidden file input for custom CP upload */}
@@ -230,7 +235,7 @@ export const LeftSidebar: React.FC<LeftSidebarProps> = ({
               </span>
             </div>
             <span className="text-[10px] text-gray-400 font-mono shrink-0">
-              {grid.divisionsX}×{grid.divisionsY}
+              {activeGridDivs}
             </span>
           </div>
 
@@ -366,15 +371,10 @@ export const LeftSidebar: React.FC<LeftSidebarProps> = ({
               <span className="truncate font-medium">
                 Reference Image
               </span>
-              {image.fileName && (
-                <span className="text-[10px] text-gray-400 font-mono truncate">
-                  ({image.fileName})
-                </span>
-              )}
+              <span className="text-[10px] text-gray-400 font-mono truncate">
+                ({activeCPName} {activeCPDims})
+              </span>
             </div>
-            {image.url && (
-              <span className="text-[10px] text-gray-400 font-mono shrink-0">1000×1000</span>
-            )}
           </div>
 
           {/* Rulers & Guidelines Layer */}

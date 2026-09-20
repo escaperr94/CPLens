@@ -119,6 +119,7 @@ export interface CPSheet {
   measurements: MeasurementItem[];
   rulers: RulerItem[];
   viewMode: CPViewMode;
+  layers?: LayerVisibility;
 }
 
 export interface CameraState {
