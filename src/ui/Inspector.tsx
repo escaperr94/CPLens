@@ -1122,6 +1122,26 @@ export const Inspector: React.FC<InspectorProps> = ({ rulers: propRulers, onRunA
                   <option value={0}>None</option>
                 </FigmaSelect>
               </div>
+
+              {/* Opacity row */}
+              <div className="px-3 mt-2 flex items-center justify-between gap-2">
+                <span className="text-[#6B7280] text-xs w-16 shrink-0">Opacity</span>
+                <div className="flex items-center gap-2 flex-1 justify-end">
+                  <input
+                    type="range"
+                    min={5}
+                    max={100}
+                    step={1}
+                    value={Math.round((grid.opacity ?? 0.45) * 100)}
+                    onChange={(e) => setGridConfig({ opacity: Number(e.target.value) / 100 })}
+                    className="flex-1 h-1.5 bg-[#E5E5E5] rounded-lg appearance-none cursor-pointer accent-[#0D99FF]"
+                    title="Grid Opacity"
+                  />
+                  <span className="font-mono text-[11px] text-gray-600 w-9 text-right shrink-0">
+                    {Math.round((grid.opacity ?? 0.45) * 100)}%
+                  </span>
+                </div>
+              </div>
             </div>
 
 

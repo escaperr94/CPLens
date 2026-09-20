@@ -51,6 +51,7 @@ export const LeftSidebar: React.FC<LeftSidebarProps> = ({
     creaseType,
     setCreaseType,
     grid,
+    setGridConfig,
     layers,
     rulers,
     setLayerVisibility,
@@ -74,6 +75,7 @@ export const LeftSidebar: React.FC<LeftSidebarProps> = ({
       creaseType: state.creaseType,
       setCreaseType: state.setCreaseType,
       grid: state.grid,
+      setGridConfig: state.setGridConfig,
       layers: state.layers,
       rulers: state.rulers,
       setLayerVisibility: state.setLayerVisibility,
@@ -238,6 +240,24 @@ export const LeftSidebar: React.FC<LeftSidebarProps> = ({
               {activeGridDivs}
             </span>
           </div>
+          {layers.grid && (
+            <div className="flex items-center gap-2 px-2.5 py-1 mx-2 mb-1 text-gray-500 bg-gray-50/90 rounded-[6px] border border-gray-100">
+              <span className="text-[10px] text-gray-500 shrink-0 font-medium">Opacity</span>
+              <input
+                type="range"
+                min={5}
+                max={100}
+                step={1}
+                value={Math.round((grid.opacity ?? 0.45) * 100)}
+                onChange={(e) => setGridConfig({ opacity: Number(e.target.value) / 100 })}
+                className="flex-1 h-1 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-[#0D99FF]"
+                title="Grid Opacity"
+              />
+              <span className="font-mono text-[10px] text-gray-500 w-7 text-right shrink-0">
+                {Math.round((grid.opacity ?? 0.45) * 100)}%
+              </span>
+            </div>
+          )}
 
           {/* Crease Lines Layer Parent */}
           <div className="flex items-center justify-between px-2 py-1.5 mx-2 rounded-md hover:bg-gray-50 text-gray-700">
