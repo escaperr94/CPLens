@@ -150,7 +150,15 @@ export const App: React.FC = () => {
             state.updateAnalysisProgress(step, percent);
           });
 
+          const scaleX = activeSheet.width / canvas.width;
+          const scaleY = activeSheet.height / canvas.height;
+          const left = Math.max(0, Math.min(Math.floor(activeSheet.width * 0.4), Math.round(result.corners[0].x * scaleX)));
+          const top = Math.max(0, Math.min(Math.floor(activeSheet.height * 0.4), Math.round(result.corners[0].y * scaleY)));
+          const right = Math.max(0, Math.min(Math.floor(activeSheet.width * 0.4), Math.round((canvas.width - result.corners[2].x) * scaleX)));
+          const bottom = Math.max(0, Math.min(Math.floor(activeSheet.height * 0.4), Math.round((canvas.height - result.corners[2].y) * scaleY)));
+
           state.updateSheet(activeSheet.id, {
+            insets: { top, left, right, bottom },
             creases: result.creases,
             points: result.referencePoints,
             grid: {

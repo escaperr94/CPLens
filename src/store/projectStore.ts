@@ -4,6 +4,7 @@ import { CreaseType } from '../geometry/line';
 import { DEFAULT_GRID_CONFIG, GridConfig } from '../geometry/grid';
 import { IDENTITY_HOMOGRAPHY, createUnitSquareHomography, Matrix3x3 } from '../geometry/homography';
 import { SnapCandidate, DEFAULT_SNAP_OPTIONS, SnapOptions } from '../geometry/snapping';
+import { detectCPBoundaryInsets } from '../cv/pipeline';
 import {
   ProjectState,
   ToolType,
@@ -1012,82 +1013,16 @@ export const useAppStore = create<AppStore>((set, get) => ({
       ctx.drawImage(img, 0, 0);
       const imgData = ctx.getImageData(0, 0, nw, nh);
       const data = imgData.data;
+      const insets = detectCPBoundaryInsets(data, nw, nh, targetW, targetH);
 
-      // Conservative search: only trim whitespace/empty margins, capped at max 12% of dimension (max 60px)
-      const maxScanY = Math.min(60, Math.floor(nh * 0.12));
-      const maxScanX = Math.min(60, Math.floor(nw * 0.12));
-
-      // Scan rows from top
-      let topY = 0;
-      for (let y = 0; y < maxScanY; y++) {
-        let ink = 0;
-        for (let x = 0; x < nw; x++) {
-          const idx = (y * nw + x) * 4;
-          const r = data[idx], g = data[idx + 1], b = data[idx + 2], a = data[idx + 3];
-          if (a > 50 && (r < 220 || g < 220 || b < 220)) ink++;
-        }
-        if (ink < Math.max(3, nw * 0.025)) {
-          topY = y + 1;
-        } else {
-          break;
-        }
-      }
-
-      // Scan rows from bottom
-      let bottomY = 0;
-      for (let y = nh - 1; y >= nh - 1 - maxScanY; y--) {
-        let ink = 0;
-        for (let x = 0; x < nw; x++) {
-          const idx = (y * nw + x) * 4;
-          const r = data[idx], g = data[idx + 1], b = data[idx + 2], a = data[idx + 3];
-          if (a > 50 && (r < 220 || g < 220 || b < 220)) ink++;
-        }
-        if (ink < Math.max(3, nw * 0.025)) {
-          bottomY = nh - y;
-        } else {
-          break;
-        }
-      }
-
-      // Scan cols from left
-      let leftX = 0;
-      for (let x = 0; x < maxScanX; x++) {
-        let ink = 0;
-        for (let y = topY; y < nh - bottomY; y++) {
-          const idx = (y * nw + x) * 4;
-          const r = data[idx], g = data[idx + 1], b = data[idx + 2], a = data[idx + 3];
-          if (a > 50 && (r < 220 || g < 220 || b < 220)) ink++;
-        }
-        if (ink < Math.max(3, (nh - topY - bottomY) * 0.025)) {
-          leftX = x + 1;
-        } else {
-          break;
-        }
-      }
-
-      // Scan cols from right
-      let rightX = 0;
-      for (let x = nw - 1; x >= nw - 1 - maxScanX; x--) {
-        let ink = 0;
-        for (let y = topY; y < nh - bottomY; y++) {
-          const idx = (y * nw + x) * 4;
-          const r = data[idx], g = data[idx + 1], b = data[idx + 2], a = data[idx + 3];
-          if (a > 50 && (r < 220 || g < 220 || b < 220)) ink++;
-        }
-        if (ink < Math.max(3, (nh - topY - bottomY) * 0.025)) {
-          rightX = nw - x;
-        } else {
-          break;
-        }
-      }
-
-      const scaleX = targetW / nw;
-      const scaleY = targetH / nh;
-      const insets: SheetInsets = {
-        top: Math.round(topY * scaleY),
-        bottom: Math.round(bottomY * scaleY),
-        left: Math.round(leftX * scaleX),
-        right: Math.round(rightX * scaleX),
+      // Ensure insets don't collapse the sheet beyond minimum viable size
+      const maxInsetX = Math.floor(targetW * 0.45);
+      const maxInsetY = Math.floor(targetH * 0.45);
+      const boundedInsets: SheetInsets = {
+        top: Math.max(0, Math.min(maxInsetY, insets.top)),
+        bottom: Math.max(0, Math.min(maxInsetY, insets.bottom)),
+        left: Math.max(0, Math.min(maxInsetX, insets.left)),
+        right: Math.max(0, Math.min(maxInsetX, insets.right)),
       };
 
       if (targetSheetId && targetSheetId !== 'main_cp') {

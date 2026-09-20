@@ -4,12 +4,14 @@ import { Stage, Layer, Image as KonvaImage, Rect, Group, Circle, Line, Text, Tra
 import { Sparkles, ArrowLeft, Copy, Square, Crop } from 'lucide-react';
 import Konva from 'konva';
 import { useAppStore } from '../store/projectStore';
-import { CreaseLine, ReferencePoint } from '../store/types';
+import { CreaseLine, ReferencePoint, CPSheet } from '../store/types';
+import { GridConfig } from '../geometry/grid';
 import { BASE_PAPER_SIZE, paperToScreen, screenToPaper, paperToWorld, worldToPaper } from './transforms';
-import { findSnapTarget, GeometryScene } from '../geometry/snapping';
+import { findSnapTarget, GeometryScene, SnapOptions } from '../geometry/snapping';
 import { findCreaseIntersections } from '../geometry/intersection';
 import { rectifyImage } from './imageRectifier';
 import { IDENTITY_HOMOGRAPHY } from '../geometry/homography';
+import { detectCPBoundaryInsets } from '../cv/pipeline';
 import { GridLayer } from './layers/GridLayer';
 import { CreaseLayer } from './layers/CreaseLayer';
 import { IntersectionLayer } from './layers/IntersectionLayer';
@@ -43,7 +45,12 @@ export const CPStage: React.FC = () => {
   const cursorRafRef = useRef<number | null>(null);
   const lastPanPosRef = useRef<Point2D | null>(null);
   const measureStartScreenRef = useRef<Point2D | null>(null);
-  const pendingCursorRef = useRef<{ paper: Point2D; screen: Point2D } | null>(null);
+  const pendingCursorRef = useRef<{
+    paper: Point2D;
+    screen: Point2D;
+    targetFrame: { origin: Point2D; width: number; height: number; sheet?: CPSheet };
+    targetGrid: GridConfig;
+  } | null>(null);
 
   const {
     image,
@@ -274,7 +281,7 @@ export const CPStage: React.FC = () => {
 
 
   // Extract cropped pixels from whichever image overlaps the crop box
-  const getCroppedImageInfo = useCallback((): { dataUrl: string; width: number; height: number } | null => {
+  const getCroppedImageInfo = useCallback((): { dataUrl: string; width: number; height: number; imgData?: ImageData } | null => {
     const curBox = useAppStore.getState().cropBox;
     if (!curBox || curBox.width < 10 || curBox.height < 10) return null;
 
@@ -309,7 +316,8 @@ export const CPStage: React.FC = () => {
             ctx.imageSmoothingEnabled = true;
             ctx.imageSmoothingQuality = 'high';
             ctx.drawImage(imgElement, sx, sy, sw, sh, 0, 0, outW, outH);
-            return { dataUrl: offscreen.toDataURL('image/png'), width: outW, height: outH };
+            const imgData = ctx.getImageData(0, 0, outW, outH);
+            return { dataUrl: offscreen.toDataURL('image/png'), width: outW, height: outH, imgData };
           }
         }
       }
@@ -354,7 +362,8 @@ export const CPStage: React.FC = () => {
           ctx.imageSmoothingEnabled = true;
           ctx.imageSmoothingQuality = 'high';
           ctx.drawImage(sourceCanvasOrImg, sx, sy, sw, sh, 0, 0, outW, outH);
-          return { dataUrl: offscreen.toDataURL('image/png'), width: outW, height: outH };
+          const imgData = ctx.getImageData(0, 0, outW, outH);
+          return { dataUrl: offscreen.toDataURL('image/png'), width: outW, height: outH, imgData };
         }
       }
     }
@@ -390,7 +399,8 @@ export const CPStage: React.FC = () => {
             ctx.imageSmoothingEnabled = true;
             ctx.imageSmoothingQuality = 'high';
             ctx.drawImage(sImg, sx, sy, sw, sh, 0, 0, outW, outH);
-            return { dataUrl: offscreen.toDataURL('image/png'), width: outW, height: outH };
+            const imgData = ctx.getImageData(0, 0, outW, outH);
+            return { dataUrl: offscreen.toDataURL('image/png'), width: outW, height: outH, imgData };
           }
         }
       }
@@ -405,8 +415,8 @@ export const CPStage: React.FC = () => {
       offscreen.height = outH;
       const ctx = offscreen.getContext('2d');
       if (ctx) {
-        ctx.drawImage(htmlImage, 0, 0, outW, outH);
-        return { dataUrl: offscreen.toDataURL('image/png'), width: outW, height: outH };
+        const imgData = ctx.getImageData(0, 0, outW, outH);
+        return { dataUrl: offscreen.toDataURL('image/png'), width: outW, height: outH, imgData };
       }
     }
 
@@ -489,34 +499,61 @@ export const CPStage: React.FC = () => {
       symmetryAxes: symmetry.axes,
     };
   }, [points, intersections, creases, grid, symmetry.axes]);
+  // Active / Target Sheet Frame resolution (origin, width, height with insets)
+  const getActiveSheetFrame = useCallback((sheetId: string | null = activeSheetId) => {
+    const targetSheet = sheets.find((s) => s.id === (sheetId || null));
+    const insets = targetSheet
+      ? (targetSheet.insets || { top: 0, right: 0, bottom: 0, left: 0 })
+      : ((sheetId === null || sheetId === 'main_cp') ? paperInsets : { top: 0, right: 0, bottom: 0, left: 0 });
+    const frameX = insets.left;
+    const frameY = insets.top;
+    const sheetOriginX = targetSheet ? targetSheet.x : paperPosition.x;
+    const sheetOriginY = targetSheet ? targetSheet.y : paperPosition.y;
+    const paperAspect = paper.aspectRatio || 1;
+    const curPaperW = targetSheet
+      ? Math.max(20, targetSheet.width - insets.left - insets.right)
+      : Math.max(20, BASE_PAPER_SIZE - insets.left - insets.right);
+    const curPaperH = targetSheet
+      ? Math.max(20, targetSheet.height - insets.top - insets.bottom)
+      : Math.max(20, (BASE_PAPER_SIZE / paperAspect) - insets.top - insets.bottom);
+    return {
+      origin: { x: sheetOriginX + frameX, y: sheetOriginY + frameY },
+      width: curPaperW,
+      height: curPaperH,
+      sheet: targetSheet,
+    };
+  }, [sheets, activeSheetId, paperInsets, paperPosition, paper.aspectRatio]);
+
 
   const movePoint = useCallback((id: string, point: Point2D) => {
     const current = useAppStore.getState();
+    const frame = getActiveSheetFrame();
     const scene = {
       ...geometryScene,
       // Do not snap a dragged point back to itself.
       referencePoints: geometryScene.referencePoints.filter((p) => p.id !== id),
     };
     const snap = current.snappingEnabled
-      ? findSnapTarget(point, scene, { ...current.snapOptions, zoom: current.camera.zoom })
+      ? findSnapTarget(point, scene, { ...current.snapOptions, zoom: current.camera.zoom }, frame.width, frame.height)
       : null;
     updatePoint(id, snap?.point ?? {
       x: Math.max(0, Math.min(1, point.x)),
       y: Math.max(0, Math.min(1, point.y)),
     });
-  }, [geometryScene, updatePoint]);
+  }, [geometryScene, updatePoint, getActiveSheetFrame]);
 
   const moveMeasurement = useCallback((id: string, endpoint: 'p1' | 'p2', point: Point2D) => {
     const current = useAppStore.getState();
+    const frame = getActiveSheetFrame();
     const snap = current.snappingEnabled
-      ? findSnapTarget(point, geometryScene, { ...current.snapOptions, zoom: current.camera.zoom })
+      ? findSnapTarget(point, geometryScene, { ...current.snapOptions, zoom: current.camera.zoom }, frame.width, frame.height)
       : null;
     const next = snap?.point ?? {
       x: Math.max(0, Math.min(1, point.x)),
       y: Math.max(0, Math.min(1, point.y)),
     };
     updateMeasurement(id, endpoint === 'p1' ? { p1: next } : { p2: next });
-  }, [geometryScene, updateMeasurement]);
+  }, [geometryScene, updateMeasurement, getActiveSheetFrame]);
 
   // Zoom on wheel (cursor-anchored zoom)
   const handleWheel = (e: Konva.KonvaEventObject<WheelEvent>) => {
@@ -615,14 +652,17 @@ export const CPStage: React.FC = () => {
       }
 
 
-    const curActiveSheet = sheets.find((s) => s.id === (useAppStore.getState().activeSheetId || null));
-    const curOrigin = curActiveSheet ? { x: curActiveSheet.x, y: curActiveSheet.y } : paperPosition;
+    const activeFrame = getActiveSheetFrame(useAppStore.getState().activeSheetId);
 
     // Determine target point: snapCandidate if active, else raw cursor
-    const rawPaper = worldToPaper({ x: worldX - curOrigin.x, y: worldY - curOrigin.y });
-    const clickSnap = snappingEnabled ? findSnapTarget(rawPaper, geometryScene, { ...snapOptions, zoom: camera.zoom }) : null;
+    const rawPaper = {
+      x: (worldX - activeFrame.origin.x) / activeFrame.width,
+      y: (worldY - activeFrame.origin.y) / activeFrame.height,
+    };
+    const clickSnap = snappingEnabled
+      ? findSnapTarget(rawPaper, geometryScene, { ...snapOptions, zoom: camera.zoom }, activeFrame.width, activeFrame.height)
+      : null;
     const targetPaper = clickSnap?.point ?? rawPaper;
-
     if (activeTool !== 'calibrate' && activeTool !== 'select' && (targetPaper.x < 0 || targetPaper.x > 1 || targetPaper.y < 0 || targetPaper.y > 1)) return;
 
     // Handle tool clicks
@@ -835,17 +875,27 @@ export const CPStage: React.FC = () => {
       }
       return;
     }
-    const curActiveSheet = sheets.find((s) => s.id === (activeSheetId || null));
-    const curOrigin = curActiveSheet ? { x: curActiveSheet.x, y: curActiveSheet.y } : paperPosition;
-    const paperPos = worldToPaper({
-      x: (pointer.x - camera.panX) / camera.zoom - curOrigin.x,
-      y: (pointer.y - camera.panY) / camera.zoom - curOrigin.y,
-    });
-    pendingCursorRef.current = { paper: paperPos, screen: pointer };
+    const worldX = (pointer.x - camera.panX) / camera.zoom;
+    const worldY = (pointer.y - camera.panY) / camera.zoom;
+
+    // Detect if mouse is hovering over a sheet or main paper
+    let targetSheetId = activeSheetId;
+    const hoveredSheet = sheets.find((s) => worldX >= s.x && worldX <= s.x + s.width && worldY >= s.y && worldY <= s.y + s.height);
+    if (hoveredSheet) {
+      targetSheetId = hoveredSheet.id;
+    } else if (worldX >= paperPosition.x && worldX <= paperPosition.x + 1000 && worldY >= paperPosition.y && worldY <= paperPosition.y + 1000) {
+      targetSheetId = 'main_cp';
+    }
+
+    const activeFrame = getActiveSheetFrame(targetSheetId);
+    const paperPos = {
+      x: (worldX - activeFrame.origin.x) / activeFrame.width,
+      y: (worldY - activeFrame.origin.y) / activeFrame.height,
+    };
+    const targetGrid = activeFrame.sheet ? activeFrame.sheet.grid : grid;
+    pendingCursorRef.current = { paper: paperPos, screen: pointer, targetFrame: activeFrame, targetGrid };
 
     if (activeTool === 'crop' && dragCropStart) {
-      const worldX = (pointer.x - camera.panX) / camera.zoom;
-      const worldY = (pointer.y - camera.panY) / camera.zoom;
       let width = Math.abs(worldX - dragCropStart.x);
       let height = Math.abs(worldY - dragCropStart.y);
       const isShift = (e.evt as MouseEvent).shiftKey;
@@ -864,17 +914,50 @@ export const CPStage: React.FC = () => {
       cursorRafRef.current = requestAnimationFrame(() => {
         cursorRafRef.current = null;
         if (pendingCursorRef.current) {
-          const { paper, screen } = pendingCursorRef.current;
+          const { paper, screen, targetFrame, targetGrid } = pendingCursorRef.current;
           setCursor(paper, screen);
+
+          // Target scene geometry (use hovered/active sheet if distinct)
+          const sheetObj = targetFrame.sheet;
+          const targetCreases = sheetObj ? (sheetObj.id === activeSheetId ? creases : sheetObj.creases) : creases;
+          const targetPoints = sheetObj ? (sheetObj.id === activeSheetId ? points : sheetObj.points) : points;
+          const targetScene: GeometryScene = (sheetObj && sheetObj.id !== activeSheetId)
+            ? {
+                referencePoints: targetPoints,
+                intersections: findCreaseIntersections(targetCreases),
+                creases: targetCreases,
+                gridConfig: targetGrid,
+                symmetryAxes: symmetry.axes,
+              }
+            : geometryScene;
+
+          // Only snap to discrete corners/intersections (grid, points, intersections), NOT continuous crease lines during hover
+          const hoverSnapOptions: SnapOptions = {
+            ...snapOptions,
+            zoom: camera.zoom,
+            enabledTargets: {
+              ...snapOptions.enabledTargets,
+              creases: false, // Don't snap along continuous lines during hover, ONLY at grid cell corners/intersections!
+            },
+          };
 
           // Calculate snap candidate
           if (snappingEnabled && activeTool !== 'calibrate' &&
             paper.x >= -0.02 && paper.x <= 1.02 && paper.y >= -0.02 && paper.y <= 1.02) {
-            const snap = findSnapTarget(paper, geometryScene, {
-              ...snapOptions,
-              zoom: camera.zoom,
-            });
-            setSnapCandidate(snap);
+            const snap = findSnapTarget(
+              paper,
+              targetScene,
+              hoverSnapOptions,
+              targetFrame.width,
+              targetFrame.height
+            );
+            setSnapCandidate(snap ? {
+              ...snap,
+              frameOrigin: targetFrame.origin,
+              paperWidth: targetFrame.width,
+              paperHeight: targetFrame.height,
+              gridConfig: targetGrid,
+            } : null);
           } else {
             setSnapCandidate(null);
           }
@@ -915,9 +998,10 @@ export const CPStage: React.FC = () => {
       const pointer = stage?.getPointerPosition();
       const start = measureStartScreenRef.current;
       if (pointer && Math.hypot(pointer.x - start.x, pointer.y - start.y) >= 4) {
-        const rawPaper = screenToPaper(pointer, camera);
+        const activeFrame = getActiveSheetFrame();
+        const rawPaper = screenToPaper(pointer, camera, activeFrame.width, activeFrame.height, activeFrame.origin);
         const snap = snappingEnabled
-          ? findSnapTarget(rawPaper, geometryScene, { ...snapOptions, zoom: camera.zoom })
+          ? findSnapTarget(rawPaper, geometryScene, { ...snapOptions, zoom: camera.zoom }, activeFrame.width, activeFrame.height)
           : null;
         const end = snap?.point ?? rawPaper;
         if (end.x >= 0 && end.x <= 1 && end.y >= 0 && end.y <= 1) {
@@ -1127,12 +1211,10 @@ export const CPStage: React.FC = () => {
           scaleY={camera.zoom}
         >
           {(() => {
-            const activeSheet = sheets.find((s) => s.id === (activeSheetId || null));
-            const curOrigin = activeSheet ? { x: activeSheet.x, y: activeSheet.y } : paperPosition;
-            const paperAspect = paper.aspectRatio || 1;
-            const curPaperW = activeSheet ? activeSheet.width : BASE_PAPER_SIZE;
-            const curPaperH = activeSheet ? activeSheet.height : (BASE_PAPER_SIZE / paperAspect);
-
+            const activeFrame = getActiveSheetFrame();
+            const curOrigin = activeFrame.origin;
+            const curPaperW = activeFrame.width;
+            const curPaperH = activeFrame.height;
             return (
               <Group x={curOrigin.x} y={curOrigin.y}>
                 {/* Intermediate line drawing preview */}
@@ -1190,8 +1272,8 @@ export const CPStage: React.FC = () => {
           {/* Locked Canvas Target Reticle */}
           {targetPoint && (
             <Group
-              x={targetPoint.x * BASE_PAPER_SIZE}
-              y={targetPoint.y * BASE_PAPER_SIZE}
+              x={targetPoint.x * curPaperW}
+              y={targetPoint.y * curPaperH}
               listening={false}
             >
               <Line
@@ -1219,35 +1301,6 @@ export const CPStage: React.FC = () => {
               />
             </Group>
           )}
-          {/* Live Cursor Coordinate HUD */}
-          {cursorPaper && cursorPaper.x >= 0 && cursorPaper.x <= 1 && cursorPaper.y >= 0 && cursorPaper.y <= 1 && (activeTool === 'point' || activeTool === 'ruler' || activeTool === 'measure') && (
-            <Group
-              x={cursorPaper.x * BASE_PAPER_SIZE}
-              y={cursorPaper.y * BASE_PAPER_SIZE}
-              listening={false}
-            >
-              <Circle
-                radius={3 / camera.zoom}
-                fill="#0D99FF"
-              />
-              <Rect
-                x={8 / camera.zoom}
-                y={-18 / camera.zoom}
-                width={86 / camera.zoom}
-                height={16 / camera.zoom}
-                fill="rgba(17, 24, 39, 0.88)"
-                cornerRadius={3 / camera.zoom}
-              />
-              <Text
-                x={12 / camera.zoom}
-                y={-14 / camera.zoom}
-                text={`${cursorPaper.x.toFixed(4)}, ${cursorPaper.y.toFixed(4)}`}
-                fontSize={9 / camera.zoom}
-                fontFamily="monospace"
-                fill="#FFFFFF"
-              />
-            </Group>
-          )}
 
           {/* Layer 9: Calibration & Crop Overlays */}
           <CalibrationOverlay
@@ -1264,8 +1317,6 @@ export const CPStage: React.FC = () => {
             onUpdateCrop={setCrop}
           />
 
-          {/* Layer 10: Snap indicator */}
-          <SnapOverlay snap={snapCandidate} zoom={camera.zoom} gridConfig={grid} />
           </Group>
         );
       })()}
@@ -1422,12 +1473,14 @@ export const CPStage: React.FC = () => {
                 name={`canvas_sheet_${s.id}`}
                 x={s.x}
                 y={s.y}
-                draggable={activeTool === 'select'}
-                onDragStart={() => {
+                draggable={activeTool === 'select' && boundaryEditSheetId !== s.id}
+                onDragStart={(e) => {
+                  if (e.target !== e.currentTarget) return;
                   setActiveSheetId(s.id);
                   selectCanvasImage(null);
                 }}
                 onDragEnd={(e) => {
+                  if (e.target !== e.currentTarget) return;
                   updateSheetPosition(s.id, Math.round(e.target.x()), Math.round(e.target.y()));
                 }}
                 onTransformEnd={(e) => {
@@ -1616,13 +1669,25 @@ export const CPStage: React.FC = () => {
                             stroke="#0D99FF"
                             strokeWidth={2 / camera.zoom}
                             draggable={true}
-                            onDragStart={() => useAppStore.getState().pushHistory()}
+                            onDragStart={(e) => {
+                              e.cancelBubble = true;
+                              useAppStore.getState().pushHistory();
+                            }}
                             onDragMove={(e) => {
-                              const localX = (e.target.x() - camera.panX) / camera.zoom - s.x;
-                              const localY = (e.target.y() - camera.panY) / camera.zoom - s.y;
+                              e.cancelBubble = true;
+                              const stage = e.target.getStage();
+                              const pointer = stage?.getPointerPosition();
+                              if (!pointer) return;
+                              const worldX = (pointer.x - camera.panX) / camera.zoom;
+                              const worldY = (pointer.y - camera.panY) / camera.zoom;
+                              const localX = worldX - s.x;
+                              const localY = worldY - s.y;
                               const newLeft = Math.max(0, Math.min(s.width - insets.right - 20, Math.round(localX)));
                               const newTop = Math.max(0, Math.min(s.height - insets.bottom - 20, Math.round(localY)));
                               updateSheetInsets(s.id, { left: newLeft, top: newTop });
+                            }}
+                            onDragEnd={(e) => {
+                              e.cancelBubble = true;
                             }}
                             onMouseEnter={(e) => { e.target.getStage()!.container().style.cursor = 'nwse-resize'; }}
                             onMouseLeave={(e) => { e.target.getStage()!.container().style.cursor = 'default'; }}
@@ -1647,13 +1712,25 @@ export const CPStage: React.FC = () => {
                             stroke="#0D99FF"
                             strokeWidth={2 / camera.zoom}
                             draggable={true}
-                            onDragStart={() => useAppStore.getState().pushHistory()}
+                            onDragStart={(e) => {
+                              e.cancelBubble = true;
+                              useAppStore.getState().pushHistory();
+                            }}
                             onDragMove={(e) => {
-                              const localX = (e.target.x() - camera.panX) / camera.zoom - s.x;
-                              const localY = (e.target.y() - camera.panY) / camera.zoom - s.y;
+                              e.cancelBubble = true;
+                              const stage = e.target.getStage();
+                              const pointer = stage?.getPointerPosition();
+                              if (!pointer) return;
+                              const worldX = (pointer.x - camera.panX) / camera.zoom;
+                              const worldY = (pointer.y - camera.panY) / camera.zoom;
+                              const localX = worldX - s.x;
+                              const localY = worldY - s.y;
                               const newRight = Math.max(0, Math.min(s.width - insets.left - 20, Math.round(s.width - localX)));
                               const newTop = Math.max(0, Math.min(s.height - insets.bottom - 20, Math.round(localY)));
                               updateSheetInsets(s.id, { right: newRight, top: newTop });
+                            }}
+                            onDragEnd={(e) => {
+                              e.cancelBubble = true;
                             }}
                             onMouseEnter={(e) => { e.target.getStage()!.container().style.cursor = 'nesw-resize'; }}
                             onMouseLeave={(e) => { e.target.getStage()!.container().style.cursor = 'default'; }}
@@ -1678,13 +1755,25 @@ export const CPStage: React.FC = () => {
                             stroke="#0D99FF"
                             strokeWidth={2 / camera.zoom}
                             draggable={true}
-                            onDragStart={() => useAppStore.getState().pushHistory()}
+                            onDragStart={(e) => {
+                              e.cancelBubble = true;
+                              useAppStore.getState().pushHistory();
+                            }}
                             onDragMove={(e) => {
-                              const localX = (e.target.x() - camera.panX) / camera.zoom - s.x;
-                              const localY = (e.target.y() - camera.panY) / camera.zoom - s.y;
+                              e.cancelBubble = true;
+                              const stage = e.target.getStage();
+                              const pointer = stage?.getPointerPosition();
+                              if (!pointer) return;
+                              const worldX = (pointer.x - camera.panX) / camera.zoom;
+                              const worldY = (pointer.y - camera.panY) / camera.zoom;
+                              const localX = worldX - s.x;
+                              const localY = worldY - s.y;
                               const newRight = Math.max(0, Math.min(s.width - insets.left - 20, Math.round(s.width - localX)));
                               const newBottom = Math.max(0, Math.min(s.height - insets.top - 20, Math.round(s.height - localY)));
                               updateSheetInsets(s.id, { right: newRight, bottom: newBottom });
+                            }}
+                            onDragEnd={(e) => {
+                              e.cancelBubble = true;
                             }}
                             onMouseEnter={(e) => { e.target.getStage()!.container().style.cursor = 'nwse-resize'; }}
                             onMouseLeave={(e) => { e.target.getStage()!.container().style.cursor = 'default'; }}
@@ -1709,13 +1798,25 @@ export const CPStage: React.FC = () => {
                             stroke="#0D99FF"
                             strokeWidth={2 / camera.zoom}
                             draggable={true}
-                            onDragStart={() => useAppStore.getState().pushHistory()}
+                            onDragStart={(e) => {
+                              e.cancelBubble = true;
+                              useAppStore.getState().pushHistory();
+                            }}
                             onDragMove={(e) => {
-                              const localX = (e.target.x() - camera.panX) / camera.zoom - s.x;
-                              const localY = (e.target.y() - camera.panY) / camera.zoom - s.y;
+                              e.cancelBubble = true;
+                              const stage = e.target.getStage();
+                              const pointer = stage?.getPointerPosition();
+                              if (!pointer) return;
+                              const worldX = (pointer.x - camera.panX) / camera.zoom;
+                              const worldY = (pointer.y - camera.panY) / camera.zoom;
+                              const localX = worldX - s.x;
+                              const localY = worldY - s.y;
                               const newLeft = Math.max(0, Math.min(s.width - insets.right - 20, Math.round(localX)));
                               const newBottom = Math.max(0, Math.min(s.height - insets.top - 20, Math.round(s.height - localY)));
                               updateSheetInsets(s.id, { left: newLeft, bottom: newBottom });
+                            }}
+                            onDragEnd={(e) => {
+                              e.cancelBubble = true;
                             }}
                             onMouseEnter={(e) => { e.target.getStage()!.container().style.cursor = 'nesw-resize'; }}
                             onMouseLeave={(e) => { e.target.getStage()!.container().style.cursor = 'default'; }}
@@ -1729,14 +1830,22 @@ export const CPStage: React.FC = () => {
                             height={8 / camera.zoom}
                             fill="#0D99FF"
                             cornerRadius={3 / camera.zoom}
-                            opacity={0.85}
-                            draggable={true}
-                            onDragStart={() => useAppStore.getState().pushHistory()}
+                            onDragStart={(e) => {
+                              e.cancelBubble = true;
+                              useAppStore.getState().pushHistory();
+                            }}
                             onDragMove={(e) => {
-                              const stageY = e.target.y();
-                              const localY = (stageY - camera.panY) / camera.zoom - s.y;
+                              e.cancelBubble = true;
+                              const stage = e.target.getStage();
+                              const pointer = stage?.getPointerPosition();
+                              if (!pointer) return;
+                              const worldY = (pointer.y - camera.panY) / camera.zoom;
+                              const localY = worldY - s.y;
                               const newTop = Math.max(0, Math.min(s.height - insets.bottom - 20, Math.round(localY)));
                               updateSheetInsets(s.id, { top: newTop });
+                            }}
+                            onDragEnd={(e) => {
+                              e.cancelBubble = true;
                             }}
                             onMouseEnter={(e) => {
                               const c = e.target.getStage()?.container();
@@ -1757,13 +1866,22 @@ export const CPStage: React.FC = () => {
                             fill="#0D99FF"
                             cornerRadius={3 / camera.zoom}
                             opacity={0.85}
-                            draggable={true}
-                            onDragStart={() => useAppStore.getState().pushHistory()}
+                            onDragStart={(e) => {
+                              e.cancelBubble = true;
+                              useAppStore.getState().pushHistory();
+                            }}
                             onDragMove={(e) => {
-                              const stageY = e.target.y();
-                              const localY = (stageY - camera.panY) / camera.zoom - s.y;
+                              e.cancelBubble = true;
+                              const stage = e.target.getStage();
+                              const pointer = stage?.getPointerPosition();
+                              if (!pointer) return;
+                              const worldY = (pointer.y - camera.panY) / camera.zoom;
+                              const localY = worldY - s.y;
                               const newBottom = Math.max(0, Math.min(s.height - insets.top - 20, Math.round(s.height - localY)));
                               updateSheetInsets(s.id, { bottom: newBottom });
+                            }}
+                            onDragEnd={(e) => {
+                              e.cancelBubble = true;
                             }}
                             onMouseEnter={(e) => {
                               const c = e.target.getStage()?.container();
@@ -1784,13 +1902,22 @@ export const CPStage: React.FC = () => {
                             fill="#0D99FF"
                             cornerRadius={3 / camera.zoom}
                             opacity={0.85}
-                            draggable={true}
-                            onDragStart={() => useAppStore.getState().pushHistory()}
+                            onDragStart={(e) => {
+                              e.cancelBubble = true;
+                              useAppStore.getState().pushHistory();
+                            }}
                             onDragMove={(e) => {
-                              const stageX = e.target.x();
-                              const localX = (stageX - camera.panX) / camera.zoom - s.x;
+                              e.cancelBubble = true;
+                              const stage = e.target.getStage();
+                              const pointer = stage?.getPointerPosition();
+                              if (!pointer) return;
+                              const worldX = (pointer.x - camera.panX) / camera.zoom;
+                              const localX = worldX - s.x;
                               const newLeft = Math.max(0, Math.min(s.width - insets.right - 20, Math.round(localX)));
                               updateSheetInsets(s.id, { left: newLeft });
+                            }}
+                            onDragEnd={(e) => {
+                              e.cancelBubble = true;
                             }}
                             onMouseEnter={(e) => {
                               const c = e.target.getStage()?.container();
@@ -1811,13 +1938,22 @@ export const CPStage: React.FC = () => {
                             fill="#0D99FF"
                             cornerRadius={3 / camera.zoom}
                             opacity={0.85}
-                            draggable={true}
-                            onDragStart={() => useAppStore.getState().pushHistory()}
+                            onDragStart={(e) => {
+                              e.cancelBubble = true;
+                              useAppStore.getState().pushHistory();
+                            }}
                             onDragMove={(e) => {
-                              const stageX = e.target.x();
-                              const localX = (stageX - camera.panX) / camera.zoom - s.x;
+                              e.cancelBubble = true;
+                              const stage = e.target.getStage();
+                              const pointer = stage?.getPointerPosition();
+                              if (!pointer) return;
+                              const worldX = (pointer.x - camera.panX) / camera.zoom;
+                              const localX = worldX - s.x;
                               const newRight = Math.max(0, Math.min(s.width - insets.left - 20, Math.round(s.width - localX)));
                               updateSheetInsets(s.id, { right: newRight });
+                            }}
+                            onDragEnd={(e) => {
+                              e.cancelBubble = true;
                             }}
                             onMouseEnter={(e) => {
                               const c = e.target.getStage()?.container();
@@ -1925,6 +2061,29 @@ export const CPStage: React.FC = () => {
               }}
             />
           )}
+          {/* Topmost Precision Snap Overlay: rendered on top of all sheets & canvas images */}
+          {snapCandidate && (() => {
+            const fallbackFrame = getActiveSheetFrame();
+            const frameOrigin = snapCandidate.frameOrigin || fallbackFrame.origin;
+            const pw = snapCandidate.paperWidth || fallbackFrame.width;
+            const ph = snapCandidate.paperHeight || fallbackFrame.height;
+            const g = snapCandidate.gridConfig || grid;
+            return (
+              <Group
+                x={frameOrigin.x}
+                y={frameOrigin.y}
+                listening={false}
+              >
+                <SnapOverlay
+                  snap={snapCandidate}
+                  zoom={camera.zoom}
+                  gridConfig={g}
+                  paperWidth={pw}
+                  paperHeight={ph}
+                />
+              </Group>
+            );
+          })()}
         </Layer>
       </Stage>
       {/* Floating Crop Action Bar */}
@@ -1974,8 +2133,9 @@ export const CPStage: React.FC = () => {
                 setActiveTool('select');
                 setCropBox(null);
                 setTimeout(() => {
+                  autoTrimBoundary('main_cp');
                   fitToPaper(dimensions.width - 400, dimensions.height - 80);
-                }, 60);
+                }, 80);
               }
             }}
             className="h-7 px-3 bg-[#0D99FF] hover:bg-[#0088EE] text-white font-medium text-xs rounded-lg flex items-center gap-1.5 shadow-2xs transition-colors cursor-pointer"
@@ -2001,6 +2161,17 @@ export const CPStage: React.FC = () => {
               const cropAspect = cropInfo ? cropInfo.width / (cropInfo.height || 1) : 1;
               const sheetW = 1000;
               const sheetH = Math.round(1000 / cropAspect);
+
+              let initialInsets = { top: 0, right: 0, bottom: 0, left: 0 };
+              if (cropInfo?.imgData) {
+                const detected = detectCPBoundaryInsets(cropInfo.imgData.data, cropInfo.width, cropInfo.height, sheetW, sheetH);
+                initialInsets = {
+                  top: Math.max(0, Math.min(Math.floor(sheetH * 0.4), detected.top)),
+                  bottom: Math.max(0, Math.min(Math.floor(sheetH * 0.4), detected.bottom)),
+                  left: Math.max(0, Math.min(Math.floor(sheetW * 0.4), detected.left)),
+                  right: Math.max(0, Math.min(Math.floor(sheetW * 0.4), detected.right)),
+                };
+              }
 
               const newSheetId = addSheet({
                 name: `CP ${sheets.length + 1} (Cut)`,

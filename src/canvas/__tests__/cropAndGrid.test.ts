@@ -1,5 +1,9 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { useAppStore } from '../../store/projectStore';
+import { findSnapTarget, DEFAULT_SNAP_OPTIONS } from '../../geometry/snapping';
+import { DEFAULT_GRID_CONFIG } from '../../geometry/grid';
+import { detectCPBoundaryInsets } from '../../cv/pipeline';
+import { worldToPaper, paperToWorld, paperToScreen, screenToPaper } from '../transforms';
 
 describe('Non-square Crop, Autofit Boundary, and Manual Grid Inspection', () => {
   beforeEach(() => {
@@ -201,5 +205,85 @@ describe('Non-square Crop, Autofit Boundary, and Manual Grid Inspection', () => 
     expect(sheet?.insets?.top).toBe(25);
     expect(sheet?.insets?.left).toBe(30);
     expect(useAppStore.getState().imageTransform.scale).toBe(1.25);
+  });
+
+  it('snaps accurately to grid on non-square sheets with custom paper dimensions', () => {
+    const gridConfig = {
+      ...DEFAULT_GRID_CONFIG,
+      divisionsX: 32,
+      divisionsY: 16,
+      enabled: true,
+    };
+
+    const scene = {
+      referencePoints: [],
+      intersections: [],
+      creases: [],
+      gridConfig,
+    };
+
+    // Sheet of 1000 x 500 (2:1 aspect ratio)
+    const paperWidth = 1000;
+    const paperHeight = 500;
+
+    // Cursor near grid line (15/32, 7/16)
+    // In normalized coords: (15/32, 7/16) = (0.46875, 0.4375)
+    const cursor = { x: 0.47, y: 0.438 };
+
+    const snap = findSnapTarget(cursor, scene, DEFAULT_SNAP_OPTIONS, paperWidth, paperHeight);
+    expect(snap).not.toBeNull();
+    expect(snap?.kind).toBe('grid');
+    expect(snap?.label).toBe('Grid (15, 7)');
+    expect(snap?.point.x).toBeCloseTo(15 / 32, 4);
+    expect(snap?.point.y).toBeCloseTo(7 / 16, 4);
+  });
+
+  it('calculates boundary insets accurately from image data using detectCPBoundaryInsets', () => {
+    const width = 200;
+    const height = 200;
+    const data = new Uint8ClampedArray(width * height * 4);
+    data.fill(255); // white background
+
+    // Draw a CP square with 20px padding on all sides: from x=20 to x=179, y=20 to y=179
+    for (let y = 20; y <= 179; y++) {
+      for (let x = 20; x <= 179; x++) {
+        if (x === 20 || x === 179 || y === 20 || y === 179) {
+          const idx = (y * width + x) * 4;
+          data[idx] = 20;
+          data[idx + 1] = 20;
+          data[idx + 2] = 20;
+        }
+      }
+    }
+
+    const insets = detectCPBoundaryInsets(data, width, height, 1000, 1000);
+    expect(insets.left).toBeGreaterThanOrEqual(90);
+    expect(insets.top).toBeGreaterThanOrEqual(90);
+    expect(insets.right).toBeGreaterThanOrEqual(90);
+    expect(insets.bottom).toBeGreaterThanOrEqual(90);
+  });
+
+  it('transforms coordinates with custom paper dimensions and frame origin', () => {
+    const origin = { x: 500, y: 200 };
+    const paperWidth = 800;
+    const paperHeight = 400;
+
+    const paperPt = { x: 0.5, y: 0.5 };
+    const worldPt = paperToWorld(paperPt, paperWidth, paperHeight, origin);
+    expect(worldPt.x).toBe(500 + 0.5 * 800); // 900
+    expect(worldPt.y).toBe(200 + 0.5 * 400); // 400
+
+    const roundTripPaper = worldToPaper(worldPt, paperWidth, paperHeight, origin);
+    expect(roundTripPaper.x).toBeCloseTo(0.5, 4);
+    expect(roundTripPaper.y).toBeCloseTo(0.5, 4);
+
+    const camera = { zoom: 2, panX: 100, panY: 50, pixelated: false };
+    const screenPt = paperToScreen(paperPt, camera, paperWidth, paperHeight, origin);
+    expect(screenPt.x).toBe(900 * 2 + 100); // 1900
+    expect(screenPt.y).toBe(400 * 2 + 50);  // 850
+
+    const roundTripFromScreen = screenToPaper(screenPt, camera, paperWidth, paperHeight, origin);
+    expect(roundTripFromScreen.x).toBeCloseTo(0.5, 4);
+    expect(roundTripFromScreen.y).toBeCloseTo(0.5, 4);
   });
 });

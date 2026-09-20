@@ -10,6 +10,8 @@ export interface SnapOverlayProps {
   snap: SnapCandidate | null;
   zoom: number;
   gridConfig?: GridConfig;
+  paperWidth?: number;
+  paperHeight?: number;
 }
 
 let measureCanvas: HTMLCanvasElement | null = null;
@@ -62,14 +64,16 @@ function getSnapBadgeInfo(snap: SnapCandidate): { typeLabel: string; accentColor
   }
 }
 
-export const SnapOverlay: React.FC<SnapOverlayProps> = ({ snap, zoom, gridConfig }) => {
+export const SnapOverlay: React.FC<SnapOverlayProps> = ({ snap, zoom, gridConfig, paperWidth, paperHeight }) => {
   const storeGrid = useAppStore((s) => s.grid);
   const grid = gridConfig ?? storeGrid;
 
   if (!snap) return null;
 
-  const wx = snap.point.x * BASE_PAPER_SIZE;
-  const wy = snap.point.y * BASE_PAPER_SIZE;
+  const pW = paperWidth || BASE_PAPER_SIZE;
+  const pH = paperHeight || BASE_PAPER_SIZE;
+  const wx = snap.point.x * pW;
+  const wy = snap.point.y * pH;
 
   // Visual scaling: elements keep constant pixel size on screen
   const s = 1 / zoom;
@@ -125,8 +129,13 @@ export const SnapOverlay: React.FC<SnapOverlayProps> = ({ snap, zoom, gridConfig
     tooltipY = ringRadius + 6 * s;
   }
 
+  // If too close to bottom edge, flip above
+  if (wy + tooltipY + badgeHeight > pH) {
+    tooltipY = -ringRadius - 4 * s - badgeHeight;
+  }
+
   // If too close to right edge, flip left
-  if (wx + tooltipX + badgeWidth > BASE_PAPER_SIZE) {
+  if (wx + tooltipX + badgeWidth > pW) {
     tooltipX = -ringRadius - 6 * s - badgeWidth;
   }
 

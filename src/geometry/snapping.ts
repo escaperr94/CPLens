@@ -1,5 +1,5 @@
 import { BASE_PAPER_SIZE } from '../canvas/transforms';
-import { Point2D, distance } from './point';
+import { Point2D } from './point';
 import { Segment, projectPointOntoSegment } from './segment';
 import { CreaseIntersection } from './intersection';
 import { GridConfig, nearestGridIntersection } from './grid';
@@ -13,6 +13,10 @@ export interface SnapCandidate {
   distancePx: number;
   label?: string;
   sourceId?: string;
+  frameOrigin?: Point2D;
+  paperWidth?: number;
+  paperHeight?: number;
+  gridConfig?: GridConfig;
 }
 
 export interface SnapOptions {
@@ -55,10 +59,18 @@ export const DEFAULT_SNAP_OPTIONS: SnapOptions = {
 export function findSnapTarget(
   cursor: Point2D,
   scene: GeometryScene,
-  options: SnapOptions = DEFAULT_SNAP_OPTIONS
+  options: SnapOptions = DEFAULT_SNAP_OPTIONS,
+  paperWidth: number = BASE_PAPER_SIZE,
+  paperHeight: number = BASE_PAPER_SIZE
 ): SnapCandidate | null {
   const { snapRadiusPx, zoom, enabledTargets } = options;
-  const maxWorldDist = snapRadiusPx / ((zoom || 1) * BASE_PAPER_SIZE);
+  const pw = paperWidth || BASE_PAPER_SIZE;
+  const ph = paperHeight || BASE_PAPER_SIZE;
+  const maxWorldDistX = snapRadiusPx / ((zoom || 1) * pw);
+  const maxWorldDistY = snapRadiusPx / ((zoom || 1) * ph);
+
+  const calcScreenDist = (p: Point2D, target: Point2D) =>
+    Math.hypot((p.x - target.x) * pw * (zoom || 1), (p.y - target.y) * ph * (zoom || 1));
 
   let bestCandidate: SnapCandidate | null = null;
   let minScreenDist = snapRadiusPx;
@@ -67,9 +79,8 @@ export function findSnapTarget(
   if (enabledTargets.points) {
     for (let i = 0; i < scene.referencePoints.length; i++) {
       const p = scene.referencePoints[i];
-      if (Math.abs(p.x - cursor.x) > maxWorldDist || Math.abs(p.y - cursor.y) > maxWorldDist) continue;
-      const dWorld = distance(cursor, p);
-      const dPx = dWorld * zoom * BASE_PAPER_SIZE;
+      if (Math.abs(p.x - cursor.x) > maxWorldDistX || Math.abs(p.y - cursor.y) > maxWorldDistY) continue;
+      const dPx = calcScreenDist(cursor, p);
       if (dPx < minScreenDist) {
         minScreenDist = dPx;
         bestCandidate = {
@@ -87,9 +98,8 @@ export function findSnapTarget(
   if (enabledTargets.intersections) {
     for (let i = 0; i < scene.intersections.length; i++) {
       const inter = scene.intersections[i];
-      if (Math.abs(inter.x - cursor.x) > maxWorldDist || Math.abs(inter.y - cursor.y) > maxWorldDist) continue;
-      const dWorld = distance(cursor, inter);
-      const dPx = dWorld * zoom * BASE_PAPER_SIZE;
+      if (Math.abs(inter.x - cursor.x) > maxWorldDistX || Math.abs(inter.y - cursor.y) > maxWorldDistY) continue;
+      const dPx = calcScreenDist(cursor, inter);
       if (dPx < minScreenDist) {
         minScreenDist = dPx;
         bestCandidate = {
@@ -108,8 +118,7 @@ export function findSnapTarget(
   // 3. Grid Intersections
   if (enabledTargets.grid && scene.gridConfig.enabled) {
     const { paperPoint, gridX, gridY } = nearestGridIntersection(cursor, scene.gridConfig);
-    const dWorld = distance(cursor, paperPoint);
-    const dPx = dWorld * zoom * BASE_PAPER_SIZE;
+    const dPx = calcScreenDist(cursor, paperPoint);
     if (dPx < minScreenDist) {
       minScreenDist = dPx;
       bestCandidate = {
@@ -125,17 +134,17 @@ export function findSnapTarget(
   if (enabledTargets.creases) {
     for (let i = 0; i < scene.creases.length; i++) {
       const c = scene.creases[i];
-      const minX = Math.min(c.p1.x, c.p2.x) - maxWorldDist;
+      const minX = Math.min(c.p1.x, c.p2.x) - maxWorldDistX;
       if (cursor.x < minX) continue;
-      const maxX = Math.max(c.p1.x, c.p2.x) + maxWorldDist;
+      const maxX = Math.max(c.p1.x, c.p2.x) + maxWorldDistX;
       if (cursor.x > maxX) continue;
-      const minY = Math.min(c.p1.y, c.p2.y) - maxWorldDist;
+      const minY = Math.min(c.p1.y, c.p2.y) - maxWorldDistY;
       if (cursor.y < minY) continue;
-      const maxY = Math.max(c.p1.y, c.p2.y) + maxWorldDist;
+      const maxY = Math.max(c.p1.y, c.p2.y) + maxWorldDistY;
       if (cursor.y > maxY) continue;
 
       const proj = projectPointOntoSegment(cursor, c.p1, c.p2);
-      const dPx = proj.distance * zoom * BASE_PAPER_SIZE;
+      const dPx = calcScreenDist(cursor, proj.point);
       if (dPx < minScreenDist) {
         minScreenDist = dPx;
         bestCandidate = {
@@ -158,7 +167,7 @@ export function findSnapTarget(
       { x: 0, y: 1 },
     ];
     for (const c of corners) {
-      const dPx = distance(cursor, c) * zoom * BASE_PAPER_SIZE;
+      const dPx = calcScreenDist(cursor, c);
       if (dPx < minScreenDist) {
         minScreenDist = dPx;
         bestCandidate = {

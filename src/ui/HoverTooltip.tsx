@@ -1,17 +1,35 @@
 import React from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { useAppStore } from '../store/projectStore';
-import { paperToScreen } from '../canvas/transforms';
+import { paperToScreen, BASE_PAPER_SIZE } from '../canvas/transforms';
 
 export const HoverTooltip: React.FC = () => {
-  const { hoveredPoint, camera } = useAppStore(useShallow((state) => ({
-    hoveredPoint: state.hoveredPoint,
-    camera: state.camera,
-  })));
+  const { hoveredPoint, camera, activeSheetId, sheets, paperPosition, paperInsets, paper } = useAppStore(
+    useShallow((state) => ({
+      hoveredPoint: state.hoveredPoint,
+      camera: state.camera,
+      activeSheetId: state.activeSheetId,
+      sheets: state.sheets,
+      paperPosition: state.paperPosition,
+      paperInsets: state.paperInsets,
+      paper: state.paper,
+    }))
+  );
 
   if (!hoveredPoint) return null;
 
-  const screenPos = paperToScreen({ x: hoveredPoint.x, y: hoveredPoint.y }, camera);
+  const activeSheet = sheets.find((s) => s.id === (activeSheetId || null));
+  const insets = activeSheet
+    ? (activeSheet.insets || { top: 0, right: 0, bottom: 0, left: 0 })
+    : ((activeSheetId === null || activeSheetId === 'main_cp') ? paperInsets : { top: 0, right: 0, bottom: 0, left: 0 });
+  const origin = activeSheet
+    ? { x: activeSheet.x + insets.left, y: activeSheet.y + insets.top }
+    : { x: paperPosition.x + insets.left, y: paperPosition.y + insets.top };
+  const paperAspect = paper.aspectRatio || 1;
+  const paperW = activeSheet ? Math.max(20, activeSheet.width - insets.left - insets.right) : Math.max(20, BASE_PAPER_SIZE - insets.left - insets.right);
+  const paperH = activeSheet ? Math.max(20, activeSheet.height - insets.top - insets.bottom) : Math.max(20, (BASE_PAPER_SIZE / paperAspect) - insets.top - insets.bottom);
+
+  const screenPos = paperToScreen({ x: hoveredPoint.x, y: hoveredPoint.y }, camera, paperW, paperH, origin);
 
   const fx = hoveredPoint.xGrid ? hoveredPoint.xGrid.formatted : `${hoveredPoint.x.toFixed(4)}`;
   const fy = hoveredPoint.yGrid ? hoveredPoint.yGrid.formatted : `${hoveredPoint.y.toFixed(4)}`;

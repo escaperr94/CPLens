@@ -38,11 +38,13 @@ export function detectCPRegion(
       const a = data[idx + 3];
 
       if (a > 50) {
-        const isRed = r > 90 && g < 80 && b < 80;
-        const isBlue = b > 90 && r < 80 && g < 80;
-        const isDark = r < 75 && g < 75 && b < 75;
+        const isRed = r > 85 && g < 90 && b < 90;
+        const isBlue = b > 85 && r < 90 && g < 90;
+        const isDark = r < 120 && g < 120 && b < 120;
+        const isColored = Math.abs(r - g) > 25 || Math.abs(r - b) > 25 || Math.abs(g - b) > 25;
+        const isInk = isRed || isBlue || isDark || (isColored && (r + g + b < 650));
 
-        if (isRed || isBlue || isDark) {
+        if (isInk) {
           colDensity[x]++;
           rowDensity[y]++;
         }
@@ -83,10 +85,14 @@ export function detectCPRegion(
   let boxW = maxX - minX;
   let boxH = maxY - minY;
 
-  if (boxW / (boxH || 1) > 1.25) {
-    boxW = boxH;
-  } else if (boxH / (boxW || 1) > 1.25) {
-    boxH = boxW;
+  // Only constrain to 1:1 square if overall image is approximately square (within 18%)
+  const imgAspect = width / (height || 1);
+  if (Math.abs(imgAspect - 1) < 0.18) {
+    if (boxW / (boxH || 1) > 1.25) {
+      boxW = boxH;
+    } else if (boxH / (boxW || 1) > 1.25) {
+      boxH = boxW;
+    }
   }
 
   return {
@@ -198,7 +204,7 @@ export function refineCPRegion(
 ): { x0: number; y0: number; width: number; height: number } {
   let bestY0 = reg.y0;
   let maxInkY0 = 0;
-  for (let y = Math.max(0, reg.y0 - 12); y <= Math.min(imgH - 1, reg.y0 + 15); y++) {
+  for (let y = Math.max(0, reg.y0 - 24); y <= Math.min(imgH - 1, reg.y0 + 24); y++) {
     let count = 0;
     for (let x = reg.x0; x <= reg.x0 + reg.width; x++) {
       const { r, g, b } = sampleColorPx(data, imgW, imgH, x, y);
@@ -212,7 +218,7 @@ export function refineCPRegion(
 
   let bestY1 = reg.y0 + reg.height;
   let maxInkY1 = 0;
-  for (let y = Math.min(imgH - 1, reg.y0 + reg.height + 12); y >= Math.max(0, reg.y0 + reg.height - 15); y--) {
+  for (let y = Math.min(imgH - 1, reg.y0 + reg.height + 24); y >= Math.max(0, reg.y0 + reg.height - 24); y--) {
     let count = 0;
     for (let x = reg.x0; x <= reg.x0 + reg.width; x++) {
       const { r, g, b } = sampleColorPx(data, imgW, imgH, x, y);
@@ -226,7 +232,7 @@ export function refineCPRegion(
 
   let bestX0 = reg.x0;
   let maxInkX0 = 0;
-  for (let x = Math.max(0, reg.x0 - 12); x <= Math.min(imgW - 1, reg.x0 + 15); x++) {
+  for (let x = Math.max(0, reg.x0 - 24); x <= Math.min(imgW - 1, reg.x0 + 24); x++) {
     let count = 0;
     for (let y = bestY0; y <= bestY1; y++) {
       const { r, g, b } = sampleColorPx(data, imgW, imgH, x, y);
@@ -240,7 +246,7 @@ export function refineCPRegion(
 
   let bestX1 = reg.x0 + reg.width;
   let maxInkX1 = 0;
-  for (let x = Math.min(imgW - 1, reg.x0 + reg.width + 12); x >= Math.max(0, reg.x0 + reg.width - 15); x--) {
+  for (let x = Math.min(imgW - 1, reg.x0 + reg.width + 24); x >= Math.max(0, reg.x0 + reg.width - 24); x--) {
     let count = 0;
     for (let y = bestY0; y <= bestY1; y++) {
       const { r, g, b } = sampleColorPx(data, imgW, imgH, x, y);
@@ -268,6 +274,35 @@ export function refineCPRegion(
     height: finalH,
   };
 }
+/**
+ * Detects crease pattern boundary and returns insets to crop margins/whitespace.
+ */
+export function detectCPBoundaryInsets(
+  data: Uint8ClampedArray,
+  width: number,
+  height: number,
+  targetWidth: number = 1000,
+  targetHeight: number = 1000
+): { top: number; right: number; bottom: number; left: number } {
+  const rawRegion = detectCPRegion(data, width, height);
+  const region = refineCPRegion(data, width, height, rawRegion);
+
+  const padLeft = Math.max(0, region.x0);
+  const padTop = Math.max(0, region.y0);
+  const padRight = Math.max(0, width - (region.x0 + region.width));
+  const padBottom = Math.max(0, height - (region.y0 + region.height));
+
+  const scaleX = targetWidth / width;
+  const scaleY = targetHeight / height;
+
+  return {
+    left: Math.round(padLeft * scaleX),
+    top: Math.round(padTop * scaleY),
+    right: Math.round(padRight * scaleX),
+    bottom: Math.round(padBottom * scaleY),
+  };
+}
+
 
 /**
  * Merge contiguous intervals [start, end]
