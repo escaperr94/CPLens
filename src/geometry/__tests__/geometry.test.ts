@@ -201,3 +201,41 @@ describe('Origami Angles', () => {
   });
 });
 
+describe('Snap Target Engine', () => {
+  const grid64 = { ...DEFAULT_GRID_CONFIG, divisionsX: 64, divisionsY: 64, enabled: true };
+
+  it('fits arbitrary cursor position to the nearest origami grid intersection', () => {
+    const scene = {
+      referencePoints: [],
+      intersections: [],
+      creases: [],
+      gridConfig: grid64,
+    };
+    const cursor = { x: 44.2 / 64, y: 13.1 / 64 };
+    const snap = findSnapTarget(cursor, scene, DEFAULT_SNAP_OPTIONS, 1000, 1000);
+    expect(snap).not.toBeNull();
+    expect(snap?.kind).toBe('grid');
+    expect(snap?.point.x).toBeCloseTo(44 / 64, 5);
+    expect(snap?.point.y).toBeCloseTo(13 / 64, 5);
+    expect(snap?.label).toBe('Grid (44, 13)');
+  });
+
+  it('aligns CV vectorized reference point slightly off-grid directly to the exact grid intersection', () => {
+    // 41/64 = 0.640625, rasterized point at 0.6401 (offset ~0.5px on 1000px paper)
+    const scene = {
+      referencePoints: [{ id: 'p1', x: 0.6401, y: 24 / 64, label: 'Vertex' }],
+      intersections: [],
+      creases: [],
+      gridConfig: grid64,
+    };
+    const cursor = { x: 0.6402, y: 24 / 64 };
+    const snap = findSnapTarget(cursor, scene, DEFAULT_SNAP_OPTIONS, 1000, 1000);
+    expect(snap).not.toBeNull();
+    expect(snap?.kind).toBe('reference-point');
+    // Perfectly snapped to 41/64:
+    expect(snap?.point.x).toBeCloseTo(41 / 64, 5);
+    expect(snap?.point.y).toBeCloseTo(24 / 64, 5);
+    expect(snap?.label).toContain('(41, 24)');
+  });
+});
+

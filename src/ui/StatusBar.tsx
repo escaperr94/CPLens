@@ -1,12 +1,18 @@
 import React from 'react';
 import { Layers, ChevronsUpDown } from 'lucide-react';
 import { useAppStore } from '../store/projectStore';
+import { formatGridFraction } from '../geometry/rational';
 
 export const StatusBar: React.FC = () => {
   const { cursorPaper, targetPoint, camera, snapCandidate, snappingEnabled, grid, creases, points } = useAppStore();
 
-  const coordX = cursorPaper ? (cursorPaper.x * grid.divisionsX).toFixed(4) : '0.0000';
-  const coordY = cursorPaper ? (cursorPaper.y * grid.divisionsY).toFixed(4) : '0.0000';
+  const activePoint = snapCandidate ? snapCandidate.point : cursorPaper;
+  const cursorFx = activePoint ? formatGridFraction(activePoint.x, grid.divisionsX) : null;
+  const cursorFy = activePoint ? formatGridFraction(activePoint.y, grid.divisionsY) : null;
+
+  const targetFx = targetPoint ? formatGridFraction(targetPoint.x, grid.divisionsX) : null;
+  const targetFy = targetPoint ? formatGridFraction(targetPoint.y, grid.divisionsY) : null;
+
   let snapText = 'none';
   if (snappingEnabled) {
     if (snapCandidate) {
@@ -38,16 +44,16 @@ export const StatusBar: React.FC = () => {
 
         {/* Coordinates or Pinned Target */}
         <div className="flex items-center space-x-2 font-mono text-[11px] text-neutral-600">
-          {targetPoint ? (
+          {targetPoint && targetFx && targetFy ? (
             <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-[#E1E8F5] text-[#4F6BA6] border border-[#4F6BA6]/20 font-semibold text-[10px]">
               <span className="w-1.5 h-1.5 rounded-full bg-[#4F6BA6] animate-pulse" />
-              <span>Pinned: ({targetPoint.x.toFixed(4)}, {targetPoint.y.toFixed(4)})</span>
+              <span>Pinned: ({targetFx}, {targetFy})</span>
             </span>
           ) : (
             <span className="text-[#86868B]">Click paper to pin point</span>
           )}
           <span>
-            cursor: ({cursorPaper ? cursorPaper.x.toFixed(4) : '--'}, {cursorPaper ? cursorPaper.y.toFixed(4) : '--'})
+            cursor: {cursorFx && cursorFy ? `(${cursorFx}, ${cursorFy})` : '(--, --)'}
           </span>
         </div>
 

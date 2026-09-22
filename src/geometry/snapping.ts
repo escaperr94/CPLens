@@ -113,7 +113,19 @@ export function findSnapTarget(
     }
   }
 
-  if (bestCandidate) return bestCandidate;
+  if (bestCandidate) {
+    // If grid is enabled, snap candidate point onto grid lattice if it lies on or very close to a grid intersection
+    if (enabledTargets.grid && scene.gridConfig.enabled) {
+      const { paperPoint, gridX, gridY } = nearestGridIntersection(bestCandidate.point, scene.gridConfig);
+      const gridDistPx = calcScreenDist(bestCandidate.point, paperPoint);
+      // If within 6px of the grid node, align point directly to grid intersection
+      if (gridDistPx <= Math.max(6, snapRadiusPx * 0.6)) {
+        bestCandidate.point = paperPoint;
+        bestCandidate.label = `${bestCandidate.label || 'Node'} (${gridX}, ${gridY})`;
+      }
+    }
+    return bestCandidate;
+  }
 
   // 3. Grid Intersections (corners of grid cells)
   if (enabledTargets.grid && scene.gridConfig.enabled) {

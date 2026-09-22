@@ -24,6 +24,7 @@ import { SnapOverlay } from './layers/SnapOverlay';
 import { Loupe } from './Loupe';
 import { Point2D, distance } from '../geometry/point';
 import { projectPointOntoSegment } from '../geometry/segment';
+import { formatGridFraction } from '../geometry/rational';
 
 export const CPStage: React.FC = () => {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -700,18 +701,18 @@ export const CPStage: React.FC = () => {
 
     // If user clicks on any sheet or paper, switch active sheet
     let clickedSheetId: string | null = null;
-      for (const s of sheets) {
-        if (worldX >= s.x && worldX <= s.x + s.width && worldY >= s.y && worldY <= s.y + s.height) {
-          clickedSheetId = s.id;
-          break;
-        }
+    for (const s of sheets) {
+      if (worldX >= s.x && worldX <= s.x + s.width && worldY >= s.y && worldY <= s.y + s.height) {
+        clickedSheetId = s.id;
+        break;
       }
-      if (!clickedSheetId && worldX >= paperPosition.x && worldX <= paperPosition.x + 1000 && worldY >= paperPosition.y && worldY <= paperPosition.y + 1000) {
-        clickedSheetId = 'main_cp';
-      }
-      if (clickedSheetId && clickedSheetId !== (activeSheetId || 'main_cp')) {
-        setActiveSheetId(clickedSheetId === 'main_cp' ? null : clickedSheetId);
-      }
+    }
+    if (!clickedSheetId && worldX >= paperPosition.x && worldX <= paperPosition.x + 1000 && worldY >= paperPosition.y && worldY <= paperPosition.y + 1000) {
+      clickedSheetId = 'main_cp';
+    }
+    if (clickedSheetId && clickedSheetId !== (activeSheetId || 'main_cp')) {
+      setActiveSheetId(clickedSheetId === 'main_cp' ? null : clickedSheetId);
+    }
 
 
     const activeFrame = getActiveSheetFrame(useAppStore.getState().activeSheetId);
@@ -721,8 +722,18 @@ export const CPStage: React.FC = () => {
       x: (worldX - activeFrame.origin.x) / activeFrame.width,
       y: (worldY - activeFrame.origin.y) / activeFrame.height,
     };
+    const clickGrid = activeFrame.sheet
+      ? { ...activeFrame.sheet.grid, enabled: activeFrame.sheet.grid.enabled ?? true }
+      : { ...grid, enabled: grid.enabled ?? true };
+    const clickScene: GeometryScene = {
+      referencePoints: activeFrame.sheet ? (activeFrame.sheet.id === activeSheetId ? points : activeFrame.sheet.points) : points,
+      intersections: (activeFrame.sheet && activeFrame.sheet.id !== activeSheetId) ? [] : intersections,
+      creases: activeFrame.sheet ? (activeFrame.sheet.id === activeSheetId ? creases : activeFrame.sheet.creases) : creases,
+      gridConfig: clickGrid,
+      symmetryAxes: symmetry.axes,
+    };
     const clickSnap = snappingEnabled
-      ? findSnapTarget(rawPaper, geometryScene, { ...snapOptions, zoom: camera.zoom }, activeFrame.width, activeFrame.height)
+      ? findSnapTarget(rawPaper, clickScene, { ...snapOptions, zoom: camera.zoom }, activeFrame.width, activeFrame.height)
       : null;
     const targetPaper = clickSnap?.point ?? rawPaper;
     if (activeTool !== 'calibrate' && activeTool !== 'select' && (targetPaper.x < 0 || targetPaper.x > 1 || targetPaper.y < 0 || targetPaper.y > 1)) return;
@@ -954,7 +965,7 @@ export const CPStage: React.FC = () => {
       x: (worldX - activeFrame.origin.x) / activeFrame.width,
       y: (worldY - activeFrame.origin.y) / activeFrame.height,
     };
-    const isGridActive = (activeFrame.sheet ? (activeFrame.sheet.grid.enabled ?? true) : (grid.enabled ?? true)) && layers.grid;
+    const isGridActive = activeFrame.sheet ? (activeFrame.sheet.grid.enabled ?? true) : (grid.enabled ?? true);
     const targetGrid = activeFrame.sheet
       ? { ...activeFrame.sheet.grid, enabled: isGridActive }
       : { ...grid, enabled: isGridActive };
@@ -986,15 +997,13 @@ export const CPStage: React.FC = () => {
           const sheetObj = targetFrame.sheet;
           const targetCreases = sheetObj ? (sheetObj.id === activeSheetId ? creases : sheetObj.creases) : creases;
           const targetPoints = sheetObj ? (sheetObj.id === activeSheetId ? points : sheetObj.points) : points;
-          const targetScene: GeometryScene = (sheetObj && sheetObj.id !== activeSheetId)
-            ? {
-                referencePoints: targetPoints,
-                intersections: [],
-                creases: targetCreases,
-                gridConfig: targetGrid,
-                symmetryAxes: symmetry.axes,
-              }
-            : geometryScene;
+          const targetScene: GeometryScene = {
+            referencePoints: targetPoints,
+            intersections: (sheetObj && sheetObj.id !== activeSheetId) ? [] : intersections,
+            creases: targetCreases,
+            gridConfig: targetGrid,
+            symmetryAxes: symmetry.axes,
+          };
 
           // Only snap to discrete corners/intersections (grid, points, intersections), NOT continuous crease lines during hover
           const hoverSnapOptions: SnapOptions = {
@@ -1002,6 +1011,7 @@ export const CPStage: React.FC = () => {
             zoom: camera.zoom,
             enabledTargets: {
               ...snapOptions.enabledTargets,
+              grid: snapOptions.enabledTargets.grid && isGridActive,
               creases: false, // Don't snap along continuous lines during hover, ONLY at grid cell corners/intersections!
             },
           };
@@ -1123,6 +1133,13 @@ export const CPStage: React.FC = () => {
             setIsPanning(false);
             lastPanPosRef.current = null;
           }
+          if (cursorRafRef.current) {
+            cancelAnimationFrame(cursorRafRef.current);
+            cursorRafRef.current = null;
+          }
+          pendingCursorRef.current = null;
+          setSnapCandidate(null);
+          setCursor(null, null);
         }}
         onDblClick={() => { const p = stageRef.current?.getPointerPosition(); if (p) zoomAroundPoint(2, p); }}
       >
@@ -1183,113 +1200,113 @@ export const CPStage: React.FC = () => {
           {/* Main Paper Workspace Group */}
           {(Boolean(image.url) || !isCanvasEmpty) && (
             <Group x={paperPosition.x} y={paperPosition.y}>
-            {(() => {
-              const paperAspect = paper.aspectRatio || 1;
-              const paperW = BASE_PAPER_SIZE;
-              const paperH = BASE_PAPER_SIZE / paperAspect;
-              const insets = paperInsets || { top: 0, right: 0, bottom: 0, left: 0 };
-              const frameX = insets.left;
-              const frameY = insets.top;
-              const frameW = Math.max(20, paperW - insets.left - insets.right);
-              const frameH = Math.max(20, paperH - insets.top - insets.bottom);
-              return (
-                <>
-                  {/* Paper Background Area */}
-                  <Rect
-                    x={frameX}
-                    y={frameY}
-                    width={frameW}
-                    height={frameH}
-                    fill="#ffffff"
-                    stroke={layers.boundary ? '#111111' : '#E5E5E5'}
-                    strokeWidth={1 / camera.zoom}
-                    shadowColor="rgba(0, 0, 0, 0.06)"
-                    shadowBlur={20 / camera.zoom}
-                    shadowOffsetY={4 / camera.zoom}
-                    listening={false}
-                  />
-
-                  {/* Raster Image with imageTransform & clipping */}
-                  {layers.image && (
-                    <Group clipX={frameX} clipY={frameY} clipWidth={frameW} clipHeight={frameH}>
-                      {(() => {
-                        const curTransform = (activeSheetId === null || activeSheetId === 'main_cp')
-                          ? imageTransform
-                          : { scale: 1, offsetX: 0, offsetY: 0 };
-                        const scaledW = paperW * curTransform.scale;
-                        const scaledH = paperH * curTransform.scale;
-                        const imgX = curTransform.offsetX - (paperW * (curTransform.scale - 1)) / 2;
-                        const imgY = curTransform.offsetY - (paperH * (curTransform.scale - 1)) / 2;
-
-                        return (
-                          <>
-                            {paper.rectified && rectifiedCanvas ? (
-                              <KonvaImage
-                                image={rectifiedCanvas}
-                                x={imgX}
-                                y={imgY}
-                                width={scaledW}
-                                height={scaledH}
-                                opacity={imageOpacity}
-                                listening={false}
-                              />
-                            ) : htmlImage ? (
-                              <KonvaImage
-                                image={htmlImage}
-                                x={imgX}
-                                y={imgY}
-                                width={scaledW}
-                                height={scaledH}
-                                opacity={imageOpacity}
-                                listening={false}
-                              />
-                            ) : null}
-                          </>
-                        );
-                      })()}
-                    </Group>
-                  )}
-
-                  {/* Layer 2: Grid on main paper (when main paper is active) */}
-                  {layers.grid && (activeSheetId === null || activeSheetId === 'main_cp') && (
-                    <Group x={frameX} y={frameY}>
-                      <GridLayer config={grid} zoom={camera.zoom} paperWidth={frameW} paperHeight={frameH} />
-                    </Group>
-                  )}
-
-                  {/* Layer 3: Crease Lines on main paper */}
-                  {layers.creases && viewMode !== 'image' && (activeSheetId === null || activeSheetId === 'main_cp') && (
-                    <Group x={frameX} y={frameY}>
-                      <CreaseLayer
-                        creases={creases}
-                        selectedId={selectedCreaseId}
-                        zoom={camera.zoom}
-                        onSelectCrease={selectCrease}
-                        paperWidth={frameW}
-                        paperHeight={frameH}
-                      />
-                    </Group>
-                  )}
-
-                  {/* Layer 4: Intersections */}
-                  {layers.intersections && viewMode !== 'image' && (
-                    <Group x={frameX} y={frameY}>
-                      <IntersectionLayer creases={creases} zoom={camera.zoom} paperWidth={frameW} paperHeight={frameH} />
-                    </Group>
-                  )}
-
-                  {/* Layer 5: Symmetry */}
-                  {layers.symmetry && (
-                    <SymmetryLayer
-                      axes={symmetry.axes}
-                      enabled={symmetry.enabled}
-                      points={points}
-                      zoom={camera.zoom}
+              {(() => {
+                const paperAspect = paper.aspectRatio || 1;
+                const paperW = BASE_PAPER_SIZE;
+                const paperH = BASE_PAPER_SIZE / paperAspect;
+                const insets = paperInsets || { top: 0, right: 0, bottom: 0, left: 0 };
+                const frameX = insets.left;
+                const frameY = insets.top;
+                const frameW = Math.max(20, paperW - insets.left - insets.right);
+                const frameH = Math.max(20, paperH - insets.top - insets.bottom);
+                return (
+                  <>
+                    {/* Paper Background Area */}
+                    <Rect
+                      x={frameX}
+                      y={frameY}
+                      width={frameW}
+                      height={frameH}
+                      fill="#ffffff"
+                      stroke={layers.boundary ? '#111111' : '#E5E5E5'}
+                      strokeWidth={1 / camera.zoom}
+                      shadowColor="rgba(0, 0, 0, 0.06)"
+                      shadowBlur={20 / camera.zoom}
+                      shadowOffsetY={4 / camera.zoom}
+                      listening={false}
                     />
-                  )}
-                </>
-              );
-            })()}
+
+                    {/* Raster Image with imageTransform & clipping */}
+                    {layers.image && (
+                      <Group clipX={frameX} clipY={frameY} clipWidth={frameW} clipHeight={frameH}>
+                        {(() => {
+                          const curTransform = (activeSheetId === null || activeSheetId === 'main_cp')
+                            ? imageTransform
+                            : { scale: 1, offsetX: 0, offsetY: 0 };
+                          const scaledW = paperW * curTransform.scale;
+                          const scaledH = paperH * curTransform.scale;
+                          const imgX = curTransform.offsetX - (paperW * (curTransform.scale - 1)) / 2;
+                          const imgY = curTransform.offsetY - (paperH * (curTransform.scale - 1)) / 2;
+
+                          return (
+                            <>
+                              {paper.rectified && rectifiedCanvas ? (
+                                <KonvaImage
+                                  image={rectifiedCanvas}
+                                  x={imgX}
+                                  y={imgY}
+                                  width={scaledW}
+                                  height={scaledH}
+                                  opacity={imageOpacity}
+                                  listening={false}
+                                />
+                              ) : htmlImage ? (
+                                <KonvaImage
+                                  image={htmlImage}
+                                  x={imgX}
+                                  y={imgY}
+                                  width={scaledW}
+                                  height={scaledH}
+                                  opacity={imageOpacity}
+                                  listening={false}
+                                />
+                              ) : null}
+                            </>
+                          );
+                        })()}
+                      </Group>
+                    )}
+
+                    {/* Layer 2: Grid on main paper (when main paper is active) */}
+                    {layers.grid && (activeSheetId === null || activeSheetId === 'main_cp') && (
+                      <Group x={frameX} y={frameY}>
+                        <GridLayer config={grid} zoom={camera.zoom} paperWidth={frameW} paperHeight={frameH} />
+                      </Group>
+                    )}
+
+                    {/* Layer 3: Crease Lines on main paper */}
+                    {layers.creases && viewMode !== 'image' && (activeSheetId === null || activeSheetId === 'main_cp') && (
+                      <Group x={frameX} y={frameY}>
+                        <CreaseLayer
+                          creases={creases}
+                          selectedId={selectedCreaseId}
+                          zoom={camera.zoom}
+                          onSelectCrease={selectCrease}
+                          paperWidth={frameW}
+                          paperHeight={frameH}
+                        />
+                      </Group>
+                    )}
+
+                    {/* Layer 4: Intersections */}
+                    {layers.intersections && viewMode !== 'image' && (
+                      <Group x={frameX} y={frameY}>
+                        <IntersectionLayer creases={creases} zoom={camera.zoom} paperWidth={frameW} paperHeight={frameH} />
+                      </Group>
+                    )}
+
+                    {/* Layer 5: Symmetry */}
+                    {layers.symmetry && (
+                      <SymmetryLayer
+                        axes={symmetry.axes}
+                        enabled={symmetry.enabled}
+                        points={points}
+                        zoom={camera.zoom}
+                      />
+                    )}
+                  </>
+                );
+              })()}
             </Group>
           )}
         </Layer>
@@ -1361,57 +1378,96 @@ export const CPStage: React.FC = () => {
                     paperHeight={curPaperH}
                   />
                 )}
-          {/* Locked Canvas Target Reticle */}
-          {targetPoint && (
-            <Group
-              x={targetPoint.x * curPaperW}
-              y={targetPoint.y * curPaperH}
-              listening={false}
-            >
-              <Line
-                points={[-14 / camera.zoom, 0, 14 / camera.zoom, 0]}
-                stroke="#4F6BA6"
-                strokeWidth={1.2 / camera.zoom}
-                dash={[3 / camera.zoom, 2 / camera.zoom]}
-              />
-              <Line
-                points={[0, -14 / camera.zoom, 0, 14 / camera.zoom]}
-                stroke="#4F6BA6"
-                strokeWidth={1.2 / camera.zoom}
-                dash={[3 / camera.zoom, 2 / camera.zoom]}
-              />
-              <Circle
-                radius={7 / camera.zoom}
-                stroke="#4F6BA6"
-                strokeWidth={1.5 / camera.zoom}
-                fill="#E1E8F5"
-                opacity={0.8}
-              />
-              <Circle
-                radius={2.5 / camera.zoom}
-                fill="#4F6BA6"
-              />
-            </Group>
-          )}
+                {/* Locked Canvas Target Reticle & Pinned Badge */}
+                {targetPoint && (() => {
+                  const s = 1 / camera.zoom;
+                  const targetDivX = grid.divisionsX || 32;
+                  const targetDivY = grid.divisionsY || 32;
+                  const pX = formatGridFraction(targetPoint.x, targetDivX);
+                  const pY = formatGridFraction(targetPoint.y, targetDivY);
+                  const badgeText = `Pinned | (${pX}, ${pY})`;
+                  const badgeWidth = (badgeText.length * 6.5 + 20) * s;
+                  const badgeHeight = 20 * s;
+                  return (
+                    <Group
+                      x={targetPoint.x * curPaperW}
+                      y={targetPoint.y * curPaperH}
+                      listening={false}
+                    >
+                      <Line
+                        points={[-14 * s, 0, 14 * s, 0]}
+                        stroke="#334155"
+                        strokeWidth={1.2 * s}
+                        dash={[3 * s, 2 * s]}
+                      />
+                      <Line
+                        points={[0, -14 * s, 0, 14 * s, 0]}
+                        stroke="#334155"
+                        strokeWidth={1.2 * s}
+                        dash={[3 * s, 2 * s]}
+                      />
+                      <Circle
+                        radius={7 * s}
+                        stroke="#334155"
+                        strokeWidth={1.5 * s}
+                        fill="#F1F5F9"
+                        opacity={0.85}
+                      />
+                      <Circle
+                        radius={2.5 * s}
+                        fill="#334155"
+                      />
+                      {/* Pinned landmark capsule badge */}
+                      <Group x={10 * s} y={-24 * s}>
+                        <Rect
+                          width={badgeWidth}
+                          height={badgeHeight}
+                          fill="rgba(30, 41, 59, 0.92)"
+                          cornerRadius={4 * s}
+                          stroke="#475569"
+                          strokeWidth={1 * s}
+                          shadowColor="rgba(0,0,0,0.25)"
+                          shadowBlur={4 * s}
+                          shadowOffsetY={1 * s}
+                        />
+                        <Circle
+                          x={8 * s}
+                          y={10 * s}
+                          radius={2.5 * s}
+                          fill="#38BDF8"
+                        />
+                        <Text
+                          x={14 * s}
+                          y={4.5 * s}
+                          text={badgeText}
+                          fontSize={10 * s}
+                          fontFamily="ui-monospace, monospace"
+                          fontStyle="600"
+                          fill="#F8FAFC"
+                        />
+                      </Group>
+                    </Group>
+                  );
+                })()}
 
-          {/* Layer 9: Calibration & Crop Overlays */}
-          <CalibrationOverlay
-            tool={activeTool}
-            corners={paper.corners}
-            inProgressCorners={calibrationCorners}
-            crop={image.crop}
-            zoom={camera.zoom}
-            onUpdateCorner={(index, pt) => {
-              const newCorners = [...paper.corners] as [Point2D, Point2D, Point2D, Point2D];
-              newCorners[index] = pt;
-              useAppStore.getState().setCalibrationCorner(pt);
-            }}
-            onUpdateCrop={setCrop}
-          />
+                {/* Layer 9: Calibration & Crop Overlays */}
+                <CalibrationOverlay
+                  tool={activeTool}
+                  corners={paper.corners}
+                  inProgressCorners={calibrationCorners}
+                  crop={image.crop}
+                  zoom={camera.zoom}
+                  onUpdateCorner={(index, pt) => {
+                    const newCorners = [...paper.corners] as [Point2D, Point2D, Point2D, Point2D];
+                    newCorners[index] = pt;
+                    useAppStore.getState().setCalibrationCorner(pt);
+                  }}
+                  onUpdateCrop={setCrop}
+                />
 
-          </Group>
-        );
-      })()}
+              </Group>
+            );
+          })()}
           {/* Canvas Images (Pasted/Imported Images on Canvas) */}
           {canvasImages.map((cImg) => {
             const isSelected = selectedImageId === cImg.id;
@@ -1611,26 +1667,26 @@ export const CPStage: React.FC = () => {
                       {/* Render Cropped Image with transform & clipping to insets */}
                       {sheetImg && (isSelected ? layers.image : true) && (
                         <Group clipX={frameX} clipY={frameY} clipWidth={frameW} clipHeight={frameH}>
-                           {(() => {
-                             const sTransform = isSelected
-                               ? imageTransform
-                               : (s.transform || { scale: 1, offsetX: 0, offsetY: 0 });
-                             const scaledW = s.width * sTransform.scale;
-                             const scaledH = s.height * sTransform.scale;
-                             const imgX = sTransform.offsetX - (s.width * (sTransform.scale - 1)) / 2;
-                             const imgY = sTransform.offsetY - (s.height * (sTransform.scale - 1)) / 2;
-                             return (
-                               <KonvaImage
-                                 image={sheetImg}
-                                 x={imgX}
-                                 y={imgY}
-                                 width={scaledW}
-                                 height={scaledH}
-                                 opacity={0.92}
-                                 listening={false}
-                               />
-                             );
-                           })()}
+                          {(() => {
+                            const sTransform = isSelected
+                              ? imageTransform
+                              : (s.transform || { scale: 1, offsetX: 0, offsetY: 0 });
+                            const scaledW = s.width * sTransform.scale;
+                            const scaledH = s.height * sTransform.scale;
+                            const imgX = sTransform.offsetX - (s.width * (sTransform.scale - 1)) / 2;
+                            const imgY = sTransform.offsetY - (s.height * (sTransform.scale - 1)) / 2;
+                            return (
+                              <KonvaImage
+                                image={sheetImg}
+                                x={imgX}
+                                y={imgY}
+                                width={scaledW}
+                                height={scaledH}
+                                opacity={0.92}
+                                listening={false}
+                              />
+                            );
+                          })()}
                         </Group>
                       )}
 
@@ -1665,7 +1721,7 @@ export const CPStage: React.FC = () => {
                               creases={s.creases}
                               selectedId={null}
                               zoom={camera.zoom}
-                              onSelectCrease={() => {}}
+                              onSelectCrease={() => { }}
                               paperWidth={frameW}
                               paperHeight={frameH}
                             />
@@ -1679,9 +1735,9 @@ export const CPStage: React.FC = () => {
                             selectedId={null}
                             zoom={camera.zoom}
                             draggable={false}
-                            onSelectPoint={() => {}}
-                            onMovePoint={() => {}}
-                            onHoverPoint={() => {}}
+                            onSelectPoint={() => { }}
+                            onMovePoint={() => { }}
+                            onHoverPoint={() => { }}
                             paperWidth={frameW}
                             paperHeight={frameH}
                           />
@@ -2446,9 +2502,8 @@ export const CPStage: React.FC = () => {
       {isCanvasEmpty && (
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-20">
           <div
-            className={`flex flex-col items-center justify-center max-w-md mx-4 p-8 text-center bg-white/90 backdrop-blur-md rounded-2xl border-2 border-dashed ${
-              isDraggingOver ? 'border-[#0D99FF] bg-[#F0F7FF]/95 scale-[1.02]' : 'border-gray-200 hover:border-gray-300'
-            } shadow-xl pointer-events-auto transition-all duration-200`}
+            className={`flex flex-col items-center justify-center max-w-md mx-4 p-8 text-center bg-white/90 backdrop-blur-md rounded-2xl border-2 border-dashed ${isDraggingOver ? 'border-[#0D99FF] bg-[#F0F7FF]/95 scale-[1.02]' : 'border-gray-200 hover:border-gray-300'
+              } shadow-xl pointer-events-auto transition-all duration-200`}
           >
             <div className="w-16 h-16 mb-4 rounded-2xl bg-[#0D99FF]/10 flex items-center justify-center text-[#0D99FF] shadow-inner">
               <Sparkles className="w-8 h-8 text-[#0D99FF]" />
@@ -2502,11 +2557,10 @@ export const CPStage: React.FC = () => {
               const side = Math.round(Math.max(cropBox.width, cropBox.height));
               setCropBox({ ...cropBox, width: side, height: side });
             }}
-            className={`h-7 px-2.5 font-medium text-xs rounded-lg flex items-center gap-1 transition-colors cursor-pointer ${
-              Math.abs(cropBox.width - cropBox.height) < 2
+            className={`h-7 px-2.5 font-medium text-xs rounded-lg flex items-center gap-1 transition-colors cursor-pointer ${Math.abs(cropBox.width - cropBox.height) < 2
                 ? 'bg-[#EBF5FF] text-[#0D99FF] border border-[#BCE1FF] font-semibold'
                 : 'hover:bg-gray-100 text-gray-700 border border-transparent'
-            }`}
+              }`}
             title="Ép khung cắt thành hình vuông 1:1"
           >
             <Square className="w-3.5 h-3.5" />
